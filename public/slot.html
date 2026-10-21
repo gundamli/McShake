@@ -640,7 +640,7 @@
       <h3 id="storeModalTitle">选择门店</h3>
       <button class="modal-close" id="storeModalClose" aria-label="关闭">×</button>
     </div>
-    <p class="modal-desc">老虎机从门店在售菜单取真实餐品图片，先选一家门店。城市与地标分开填（接口对城市名有校验，混在一起会搜不到）。</p>
+    <p class="modal-desc" id="storeModalDesc">老虎机从门店在售菜单取真实餐品图片，先选一家门店。城市与地标分开填（接口对城市名有校验，混在一起会搜不到）。</p>
     <div id="storeModalBody"></div>
   </div>
 </div>
@@ -655,6 +655,7 @@
   var ODDS = { jackpot: 0.015, triple: 0.07, pair: 0.25 };
   var ROUNDS = 3;              // 每列滚动圈数
   var STORE_KEY = 'mcd-slot-credits';
+  var IS_DEMO = false;         // 无 Token 的演示模式：门店与价格都锁在快照里
 
   var state = {
     symbols: [],
@@ -1109,20 +1110,34 @@
     // 价格
     if (d.price) {
       var p = d.price;
-      var html = '<span class="pv">¥' + Number(p.payable).toFixed(2) + '</span>';
-      if (p.discount > 0) {
-        html += '<span class="pd">已优惠 ¥' + Number(p.discount).toFixed(2) + '</span>';
+      var cb = d.combo && d.combo.available ? d.combo : null;
+      // 能拼 1+1 时以「套餐价 + 剩余单品」为实付：大号数字若仍打在单点合计上，
+      // 就会和下面的套餐价自相矛盾（41.50 与 13.90 同时出现，用户只会觉得算错了）
+      var payNow = cb && cb.totalPayable != null ? Number(cb.totalPayable) : null;
+      var bigPay = payNow != null ? payNow : Number(p.payable);
+      var html = '<span class="pv">¥' + bigPay.toFixed(2) + '</span>';
+      if (payNow != null) {
+        var savedNow = Number(p.payable) - payNow;
+        if (savedNow > 0.004) html += '<span class="pd">已优惠 ¥' + savedNow.toFixed(2) + '</span>';
+        html += '<span class="po">单点合计 ¥' + Number(p.payable).toFixed(2) + '</span>';
+      } else {
+        if (p.discount > 0) {
+          html += '<span class="pd">已优惠 ¥' + Number(p.discount).toFixed(2) + '</span>';
+        }
+        if (p.original != null && p.discount > 0) {
+          html += '<span class="po">原价 ¥' + Number(p.original).toFixed(2) + '</span>';
+        }
       }
-      if (p.original != null && p.discount > 0) {
-        html += '<span class="po">原价 ¥' + Number(p.original).toFixed(2) + '</span>';
-      }
-      html += '<span class="po">· ' + (p.estimated
-        ? escapeHtml(p.note || '组合价不可用，为单件合计')
-        : '三个餐品合并试算（服务端自动匹配组合优惠）') + '</span>';
+      html += '<span class="po">· ' + (payNow != null
+        ? '其中两件按 1+1 套餐价结算，剩余单品按单点'
+        : (p.estimated
+          ? escapeHtml(p.note || '组合价不可用，为单件合计')
+          : '三个餐品合并试算（服务端自动匹配组合优惠）')) + '</span>';
       if (p.estimated && d.priceError) {
         html += '<div class="po" style="margin-top:4px">组合下单被拒：' + escapeHtml(d.priceError) + '</div>';
       }
-      html += renderPriceLines(p);
+      // 逐件明细是「单点」口径，与上面的套餐实付不同源；能拼套餐时改由套餐面板解释差价
+      if (payNow == null) html += renderPriceLines(p);
       $('priceBox').innerHTML = html;
     } else {
       var msg = '<span class="po">价格试算失败：' + escapeHtml(d.priceError || '未返回金额') + '</span>';
@@ -1167,15 +1182,22 @@
         return escapeHtml(s.roundName + '·' + s.name);
       }).join(' + ');
       var price = '¥' + Number(c.payable).toFixed(2);
+      // 套餐只吃掉两件，剩下那件仍按单点算：把「本单实付」写出来，
+      // 否则上面是「单点合计 ¥41.50」、这里是「¥13.90」，对不上就会被当成算错
+      var extras = (c.extraItems || []).map(function (e) { return e.name; }).join('、');
+      var payText = extras && c.totalPayable != null
+        ? '，加上' + escapeHtml(extras) + '本单实付 <b>¥' + Number(c.totalPayable).toFixed(2) + '</b>'
+        : '';
+      var base = c.baseTotal != null ? c.baseTotal : c.listTotal;
       var saving = c.saving
-        ? '（单点 ¥' + Number(c.listTotal).toFixed(2)
+        ? '（单点合计 ¥' + Number(base).toFixed(2)
           + '，省 <b>¥' + Number(c.saving).toFixed(2) + '</b>'
           + (c.discountLabel ? '，相当于 <b>' + escapeHtml(c.discountLabel) + '</b>' : '')
           + '）'
         : '';
       return '<div class="combo-hit">'
         + '<div class="ch-head">🍟 摇中 1+1 · ' + escapeHtml(c.name) + '</div>'
-        + '<div class="ch-body">' + parts + ' → <b>' + price + '</b>' + saving + '</div>'
+        + '<div class="ch-body">' + parts + ' → <b>' + price + '</b>' + payText + saving + '</div>'
         + '</div>';
     }
     if (c.reason === 'no_combo') {
@@ -1277,6 +1299,14 @@
     var body = $('storeModalBody');
     body.innerHTML = '';
     body.appendChild(buildStorePicker());
+    // 演示模式只有快照里那一家的菜单，搜别的城市必然搜不到——
+    // 与其让人反复试，不如在弹窗里先说清楚
+    var desc = $('storeModalDesc');
+    if (desc) {
+      desc.textContent = IS_DEMO
+        ? '演示模式只抓了快照里那一家门店的菜单，搜不到别的城市。城市与地标分开填；想摇自己常去的店，先点「连接 MCP」填自己的 Token。'
+        : '老虎机从门店在售菜单取真实餐品图片，先选一家门店。城市与地标分开填（接口对城市名有校验，混在一起会搜不到）。';
+    }
     $('storeModal').classList.remove('hidden');
     var inp = body.querySelector('.store-input');
     if (inp) inp.focus();
@@ -1397,6 +1427,9 @@
             found.push(s);
           });
           render(added ? '本次新增 ' + added + ' 家' : '这些门店已在列表中');
+          // 演示模式只有一家店：把「为什么只有一家」就地写在提示行里，
+          // 不然用户会以为门店列表没加载完
+          if (r.note) tip.textContent += ' · ' + r.note;
         })
         .catch(function (err) { render('搜索失败：' + err.message); });
     }
@@ -1443,7 +1476,8 @@
    */
   function renderDemoBar(h) {
     var bar = $('demoBar');
-    if (!h || !h.demo) { bar.classList.add('hidden'); return; }
+    IS_DEMO = !!(h && h.demo);
+    if (!IS_DEMO) { bar.classList.add('hidden'); return; }
     var at = h.demoSnapshotAt ? new Date(h.demoSnapshotAt) : null;
     var stamp = at
       ? at.getFullYear() + '-' + pad2(at.getMonth() + 1) + '-' + pad2(at.getDate())
@@ -1543,7 +1577,9 @@
     btn.disabled = !discount && !c;
     if (c) {
       var saveText = c.saving ? '，省 ¥' + Number(c.saving).toFixed(2) : '';
-      note.textContent = '可拼 ' + c.name + '：¥' + Number(c.payable).toFixed(2) + saveText + ' · 下单功能规划中';
+      // 有剩余单品时报「本单实付」，只报套餐价会与上面的合计对不上
+      var pay = c.totalPayable != null ? c.totalPayable : c.payable;
+      note.textContent = '可拼 ' + c.name + '：本单 ¥' + Number(pay).toFixed(2) + saveText + ' · 下单功能规划中';
     } else if (discount) {
       note.textContent = '本单可享 ¥' + discount.toFixed(2) + ' 优惠 · 下单功能规划中';
     } else if (!d) {

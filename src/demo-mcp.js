@@ -108,7 +108,7 @@ class DemoMcpClient {
       case 'calculate-price':
         return this.calculatePrice(args);
       case 'query-nearby-stores':
-        return this.nearbyStores();
+        return this.nearbyStores(args);
       default:
         throw new Error(`演示模式不提供工具 ${name}（填入自己的 MCP Token 后可用）`);
     }
@@ -258,8 +258,22 @@ class DemoMcpClient {
     };
   }
 
-  nearbyStores() {
+  /**
+   * 演示模式只有快照里这一家门店。搜索词跟它对不上就返回空数组，
+   * 交给上层提示「演示模式搜不到其他城市」——
+   * 若无视搜索词一律返回上海店，用户搜「北京」却看到上海的店，只会当成搜索坏了。
+   */
+  nearbyStores(args = {}) {
     const s = this.snapshot.store || {};
+    const city = String(args.city || '').trim();
+    const keyword = String(args.keyword || '').trim();
+    const hay = [s.storeName, s.storeAddress, s.city].filter(Boolean).join(' ');
+    // 城市允许双向包含：「上海」能匹配「上海市」，反之亦然
+    const cityOk = !city || hay.includes(city) || (!!s.city && (s.city.includes(city) || city.includes(s.city)));
+    const keywordOk = !keyword || hay.includes(keyword);
+    if (!cityOk || !keywordOk) {
+      return { success: true, code: 0, data: [] };
+    }
     return {
       success: true,
       code: 0,

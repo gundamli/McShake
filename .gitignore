@@ -15,6 +15,9 @@ sym.json
 sym2.json
 codes.json
 
+# 本地试运行的截图与临时请求快照
+.capture/
+
 # 环境变量与密钥
 .env
 .env.local

@@ -401,9 +401,10 @@ async function ensureComboIndex({ force = false } = {}) {
  * 是官方支持的行为（实测 1490 + 2350 = 3840），拼单因此不需要拆成两笔。
  *
  * @param {Array<{code:string,name:string}>} items
+ * @param {Object|null} cartPrice 整单单点试算结果，用作「省了多少」的基准
  * @returns {Promise<Object>} 直接内嵌到 /api/slot/result 的 combo 字段
  */
-async function evaluateCombo(items) {
+async function evaluateCombo(items, cartPrice) {
   const index = await ensureComboIndex();
   if (!index.size) {
     return {
@@ -447,6 +448,36 @@ async function evaluateCombo(items) {
   priced.sort((a, b) => a.price.payable - b.price.payable);
   const best = priced[0];
 
+  // 「省了多少」的基准是整单单点合计（含没进套餐的那件）；拿不到就不编
+  const cartTotal = cartPrice && cartPrice.payable != null && !cartPrice.failed
+    ? Number(cartPrice.original != null ? cartPrice.original : cartPrice.payable)
+    : null;
+
+  // 套餐只吃掉两件，剩下那件要一起算：只报套餐价会让顶部「单点合计」与这里对不上，
+  // 用户会以为剩下那件白送了（少报 ¥14.50 比不报优惠更糟）
+  const used = best.deal.slots.map((s) => String(s.code));
+  const extras = [];
+  for (const it of items) {
+    const at = used.indexOf(String(it.code));
+    if (at >= 0) { used.splice(at, 1); continue; }
+    extras.push(it);
+  }
+
+  let totalPayable = best.price.payable;
+  if (extras.length) {
+    try {
+      const args = buildPriceArgs({
+        items: [
+          { code: best.deal.comboCode, quantity: 1, roundList: best.deal.roundList },
+          ...extras.map((e) => ({ code: e.code, quantity: 1 })),
+        ],
+      }, null);
+      const data = await session.mcp.callTool('calculate-price', args);
+      const p = normalizePriceResult(data);
+      totalPayable = p && !p.failed && p.payable != null ? p.payable : null;
+    } catch (_) { totalPayable = null; }
+  }
+
   // 单点合计只用于算「省了多少」；拿不到就不编，宁可只报套餐价
   let listTotal = 0;
   for (const s of best.deal.slots) {
@@ -467,17 +498,24 @@ async function evaluateCombo(items) {
     listTotal += unit;
   }
 
-  const saving = listTotal > 0 ? Math.round((listTotal - best.price.payable) * 100) / 100 : null;
+  const baseTotal = cartTotal != null ? cartTotal : (listTotal > 0 ? listTotal : null);
+  const saving = baseTotal != null && totalPayable != null
+    ? Math.round((baseTotal - totalPayable) * 100) / 100
+    : null;
   const hasSaving = saving != null && saving > 0;
+  const extraNames = extras.map((e) => e.name).join('、');
 
   return {
     available: true,
     code: best.deal.comboCode,
     name: best.deal.comboName,
     payable: best.price.payable,
+    totalPayable,
+    extraItems: extras.map((e) => ({ code: e.code, name: e.name })),
     listTotal: listTotal > 0 ? listTotal : null,
+    baseTotal,
     saving: hasSaving ? saving : null,
-    discountLabel: hasSaving ? combo.discountLabel(best.price.payable, listTotal) : null,
+    discountLabel: hasSaving ? combo.discountLabel(totalPayable, baseTotal) : null,
     slots: best.deal.slots.map((s) => ({
       roundName: s.roundName,
       name: s.name,
@@ -485,8 +523,12 @@ async function evaluateCombo(items) {
       diffPrice: s.diffPrice,
     })),
     note: hasSaving
-      ? `把这两件拼成「${best.deal.comboName}」，比单点省 ¥${saving.toFixed(2)}`
-      : `把这两件拼成「${best.deal.comboName}」，实付 ¥${best.price.payable.toFixed(2)}`,
+      ? (extras.length
+        ? `其中两件能拼「${best.deal.comboName}」（¥${best.price.payable.toFixed(2)}），加上${extraNames}本单实付 ¥${totalPayable.toFixed(2)}，比单点省 ¥${saving.toFixed(2)}`
+        : `把这两件拼成「${best.deal.comboName}」，比单点省 ¥${saving.toFixed(2)}`)
+      : (extras.length
+        ? `其中两件能拼「${best.deal.comboName}」，加上${extraNames}本单实付 ¥${(totalPayable == null ? best.price.payable : totalPayable).toFixed(2)}`
+        : `把这两件拼成「${best.deal.comboName}」，实付 ¥${best.price.payable.toFixed(2)}`),
   };
 }
 
@@ -668,6 +710,19 @@ async function handleApi(req, res, url) {
 
       if (!hit) {
         const last = attempts[attempts.length - 1] || {};
+        // 演示模式只有快照这一家门店，搜不到时要说清楚是哪家店、怎么才能搜别的，
+        // 否则用户只会以为门店搜索坏了
+        if (session.demo) {
+          const snapStore = (session.mcp && session.mcp.snapshot && session.mcp.snapshot.store) || {};
+          const where = snapStore.storeName || '快照里的那家店';
+          return sendJson(res, 200, {
+            ok: false,
+            demo: true,
+            demoStore: where,
+            error: `演示模式只抓了「${where}」这一家店，搜不到「${last.keyword || last.city || '这个搜索词'}」附近的门店。填入自己的 MCP Token 后就能搜任意城市。`,
+            attempts,
+          });
+        }
         // city 与 keyword 相同说明已经退化到「整串匹配」，此时最可能的原因就是城市没填对
         const hint = last.city && last.city === last.keyword
           ? `city 必须是城市名 / 区名，「${last.city}」未被识别，请在「城市」框里单独填上城市（如 杭州）`
@@ -942,7 +997,7 @@ async function handleApi(req, res, url) {
       // 1+1 随心配：滚轮只收单品，但两件单品可能正好能拼成套餐价，出账时再算一次
       let comboDeal = null;
       try {
-        comboDeal = await evaluateCombo(items);
+        comboDeal = await evaluateCombo(items, price);
       } catch (err) {
         comboDeal = { available: false, reason: 'error', note: `1+1 判断失败：${err.message}` };
       }
