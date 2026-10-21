@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>麦摇摇 McShake · 摇出今日一餐</title>
+  <title>麦摇摇 McShake · 摇出今日一餐</title>
+  <!-- 内联空图标，避免浏览器请求 /favicon.ico 出现 404 噪音 -->
+  <link rel="icon" href="data:,">
 <style>
   :root {
     --mcd-red: #d62d31;
@@ -70,6 +72,31 @@
   }
   .token-status { font-size: 11px; color: #7de2c3; }
   .token-status.off { color: #ff9d9d; }
+  .token-status.demo { color: var(--mcd-yellow); }
+
+  /* 演示模式条：没有 Token 时用官方接口的真实快照重放，必须让人一眼看到「非实时」 */
+  .demo-bar {
+    margin: 14px auto 0;
+    max-width: 640px;
+    padding: 10px 14px;
+    background: #1d1a0d;
+    border: 2px solid #a8811b;
+    color: #f3e2a8;
+    font-size: 12px;
+    line-height: 1.7;
+    text-align: left;
+  }
+  .demo-bar strong {
+    display: inline-block;
+    margin-right: 8px;
+    padding: 1px 6px;
+    background: var(--mcd-yellow);
+    color: #10131f;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+  }
+  .demo-bar a { color: var(--mcd-yellow); }
+
   .token-panel {
     margin-top: 10px;
     padding: 12px;
@@ -543,6 +570,12 @@
         也可启动服务时用环境变量自动连接：MCD_MCP_TOKEN=xxx node server.js
       </div>
     </div>
+  </div>
+
+  <!-- 演示模式提示：线上试玩没有 Token，用官方接口抓取的真实快照重放 -->
+  <div id="demoBar" class="demo-bar hidden">
+    <strong>演示数据</strong>
+    <span id="demoText"></span>
   </div>
 
   <!-- 引导面板：未选门店或未连接时显示 -->
@@ -1394,10 +1427,32 @@
   }
 
   // ---------------------------------------------------------------- Token 面板
-  function setTokenStatus(text, ok) {
+  function setTokenStatus(text, ok, cls) {
     var el = $('tokenStatus');
     el.textContent = text;
-    el.className = 'token-status' + (ok === false ? ' off' : '');
+    el.className = 'token-status' + (ok === false ? ' off' : '') + (cls ? ' ' + cls : '');
+  }
+
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+
+  /**
+   * 演示模式提示条。
+   *
+   * 线上试玩没有 Token，数据来自官方接口的真实快照——必须把「非实时」和抓取时点
+   * 写在最显眼的位置，否则读者会把昨天的价格当成今天的。
+   */
+  function renderDemoBar(h) {
+    var bar = $('demoBar');
+    if (!h || !h.demo) { bar.classList.add('hidden'); return; }
+    var at = h.demoSnapshotAt ? new Date(h.demoSnapshotAt) : null;
+    var stamp = at
+      ? at.getFullYear() + '-' + pad2(at.getMonth() + 1) + '-' + pad2(at.getDate())
+        + ' ' + pad2(at.getHours()) + ':' + pad2(at.getMinutes())
+      : '未知时间';
+    $('demoText').textContent = '正在展示「' + (h.demoStore || '麦当劳门店') + '」于 ' + stamp
+      + ' 抓取的麦当劳官方接口快照：菜单、营养库、逐件单价与 286 种三连组合的计价结果都是当次的真实响应，'
+      + '只是时点固定、门店固定。想摇自己常去的店，点「连接 MCP」填自己的 Token 即可切到实时。';
+    bar.classList.remove('hidden');
   }
 
   /**
@@ -1411,9 +1466,13 @@
     return fetch('/api/health')
       .then(function (r) { return r.json(); })
       .then(function (h) {
+        renderDemoBar(h);
         setTokenStatus(
-          h.connected ? ('已连接 · ' + h.toolCount + ' 个工具') : '未连接 MCP',
-          h.connected
+          h.demo
+            ? '演示数据（官方快照）'
+            : (h.connected ? ('已连接 · ' + h.toolCount + ' 个工具') : '未连接 MCP'),
+          h.connected,
+          h.demo ? 'demo' : ''
         );
         return h;
       })
@@ -1454,6 +1513,8 @@
           $('tokenInput').value = '';
           openTokenPanel(false);
           setTokenStatus('已连接 · ' + d.toolCount + ' 个工具', true);
+          // 已切到实时数据，把演示提示条收起来
+          refreshStatus();
           // 连上之后重新走一遍引导：没门店就会落到门店选择
           loadSymbols();
         })

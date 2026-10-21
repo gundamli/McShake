@@ -554,5 +554,58 @@ console.log('\n[1+1] 随心配识别与拼单');
   check('缺原价时不编折扣', combo.discountLabel(14.9, 0) === null);
 }
 
+(async () => {
+console.log(`\n[9] 演示快照（线上试玩的数据源）`);
+{
+  const demo = require('./src/demo-mcp');
+  const snap = demo.loadSnapshot();
+
+  if (!snap) {
+    check('快照文件存在', false, 'demo/demo-snapshot.json 缺失，线上试玩会退化为要求 Token');
+  } else {
+    check('快照可加载', Array.isArray(snap.menu) && snap.menu.length > 50, `menu ${snap.menu && snap.menu.length}`);
+    check('快照带抓取时点', typeof snap.generatedAt === 'string' && snap.generatedAt.length >= 10, snap.generatedAt);
+    check('快照带门店中文名', !!(snap.store && snap.store.storeName), JSON.stringify(snap.store || {}));
+
+    const client = new demo.DemoMcpClient(snap);
+    const symbols = client.symbolsOverride(snap.menu);
+    check('演示符号与快照一致', symbols.length === snap.symbols.length && symbols.every((s) => s.code && s.name && s.image),
+      `${symbols.length} vs ${snap.symbols.length}`);
+    check('演示客户端自带工具 schema', client.getToolSchema('calculate-price') !== null);
+
+    // 已抓取的三连：必须逐分对上抓取时的真实响应
+    const key = Object.keys(snap.triples).find((k) => !snap.triples[k].failed);
+    const codes3 = key.split('|');
+    const got = client.calculatePrice({
+      items: [...new Set(codes3)].map((c) => ({ productCode: c, quantity: codes3.filter((x) => x === c).length })),
+    });
+    check('三连命中快照原样返回', got.success && got.data.price === snap.triples[key].price,
+      `demo ${got.data && got.data.price} vs 快照 ${snap.triples[key].price}`);
+    check('真实优惠被保留', got.data.discount === snap.triples[key].discount,
+      `demo ${got.data.discount} vs 快照 ${snap.triples[key].discount}`);
+
+    // 套餐价 = 基础价 + 子件差价
+    const cb = snap.combos && snap.combos[0];
+    if (cb) {
+      const roundList = cb.rounds.map((r) => ({ round: String(r.id), comboItemList: [{ code: r.choices[0].code, quantity: 1 }] }));
+      const priced = client.calculatePrice({ items: [{ productCode: cb.code, quantity: 1, roundList }] });
+      const expect = cb.baseFen + cb.rounds.reduce((s, r) => s + (r.choices[0].diffFen || 0), 0);
+      check('套餐价 = 基础价 + 差价', priced.success && priced.data.price === expect,
+        `demo ${priced.data && priced.data.price} vs 期望 ${expect}`);
+    } else {
+      check('快照含 1+1 套餐', false);
+    }
+
+    // 快照里没有的组合：按真实单价合成，不编折扣
+    const unknown = client.calculatePrice({ items: [{ productCode: '999999999', quantity: 1 }] });
+    check('未知餐品不返回假价格', unknown.success === false, JSON.stringify(unknown).slice(0, 120));
+
+    let threw = false;
+    try { await client.callTool('draw-lottery', {}); } catch (_) { threw = true; }
+    check('未覆盖的工具直接报错而非造假', threw);
+  }
+}
+
 console.log(`\n结果：${pass} 通过，${fail} 失败\n`);
 process.exit(fail === 0 ? 0 : 1);
+})();

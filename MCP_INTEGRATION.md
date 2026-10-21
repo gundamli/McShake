@@ -416,3 +416,35 @@ curl -s -X POST https://mcp.mcd.cn \
 | `delivery-create-address` | 涉及收货地址与手机号等隐私信息 |
 
 Token 仅在服务进程内存中保存，不写入磁盘；`.gitignore` 已排除所有可能含凭证的调试产物。
+
+## 10. 公网试玩：为什么用快照而不是内置 Token
+
+线上试玩地址：<https://mcshake.app.workbuddy.host/?sharecode=AMBVYTIUXU>
+
+把服务部署到公网后，最直接的做法是把自己的 `MCD_MCP_TOKEN` 塞进服务端环境变量，让所有访问者共享。这件事**不能做**：
+
+1. **凭据泄漏面**：`/api/mcp/call` 是通用工具代理，谁拿到这个站点就能用你的 Token 调任意工具；
+2. **配额**：600 次/分钟的令牌桶是账号级的，公开站点几秒就能刷穿；
+3. **条款**：麦当劳 MCP 授权是「个人非商业用途」，把 Token 挂到公网供他人使用不符合授权范围。
+
+因此线上版把**一场真实会话**抓成快照，用快照重放：
+
+| 快照字段 | 来源工具 | 说明 |
+|---|---|---|
+| `menu`（116 项） | `query-meals` + 逐件 `query-meal-detail` | 含名称、分类、官方餐品图 URL、是否有 `rounds` |
+| `nutrition` | `list-nutrition-foods` | 官方原始响应，服务端照旧解析 |
+| `prices`（32 项） | 逐件 `calculate-price` | 滚轮符号 + 1+1 子件的真实单价 |
+| `triples`（286 组） | 三件一起 `calculate-price` | 11 个符号的全部三元组合，**保留真实优惠与 `productList` 逐件分摊** |
+| `combos`（2 套） | `query-meal-detail` 的 `rounds` + 套餐价试算 | 含分区/子件/差价，`baseFen` 为套餐基础价 |
+
+`src/demo-mcp.js` 实现 `callTool` / `getToolSchema` / `callToolWithFallback` 三个与 `McpClient` 同签名的方法，直接替换 `session.mcp`，**业务逻辑零改动**。几条硬约束：
+
+- 快照中命中的三连，逐分返回抓取时的真实响应（`test.js` 里有对账断言）；
+- 快照里没有的组合按真实单价合成，`discount` 只可能是 0，绝不编造优惠；
+- 套餐价按 `baseFen + Σ diffFen` 计算，`build-demo-snapshot.js` 会用另外两组真实子件验算，不成立就放弃该套餐；
+- 未覆盖的工具（如 `draw-lottery`）直接抛错。
+
+抓取时的两个坑：
+
+- **并发打太密会被上游回 `508 太火爆了`**：286 组里有 19 组失败，改成串行小步重试后全部补齐；
+- **`query-nearby-stores` 的 `searchType=1` 是「收藏门店」**，按位置搜必须 `searchType=2`，否则列表为空、门店中文名会退化成编号。

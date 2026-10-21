@@ -24,9 +24,11 @@ const normalizePriceResult = optimizer.normalizePriceResult;
 const slot = require('./src/slot');
 const storeQuery = require('./src/store-query');
 const combo = require('./src/combo');
+const demoSource = require('./src/demo-mcp');
 
 const PORT = Number(process.env.PORT) || 8787;
-const HOST = process.env.HOST || '127.0.0.1';
+// 部署到线上时平台会给 PORT，且必须监听 0.0.0.0 才能被反向代理转发
+const HOST = process.env.HOST || (process.env.PORT ? '0.0.0.0' : '127.0.0.1');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const DATA_DIR = path.join(__dirname, 'data');
 
@@ -55,6 +57,9 @@ const session = {
   comboStore: null,
   templates: loadTemplates(),
   lastError: null,
+  /** 演示模式：无 Token 时用 demo/demo-snapshot.json 快照重放真实数据 */
+  demo: false,
+  demoMeta: null,
 };
 
 /** 可售性预检结果的缓存时长（5 分钟），避免反复消耗 MCP 配额 */
@@ -541,6 +546,11 @@ async function handleApi(req, res, url) {
       // 门店是否在营业时段内（实时状态，界面上直接标出来，避免下单时才报 60003）
       storeOpen: session.storeContext.businessStatus ?? null,
       businessHours: session.storeContext.businessHours || null,
+      // 演示模式：无 Token 也能玩，数据来自官方接口的真实快照（明确标注抓取时点）
+      demo: Boolean(session.demo),
+      demoSnapshotAt: session.demo && session.demoMeta ? session.demoMeta.generatedAt : null,
+      demoStore: session.demo && session.demoMeta ? session.demoMeta.storeName : null,
+      demoReservation: session.demo && session.demoMeta ? session.demoMeta.reservationDate : null,
     });
   }
 
@@ -554,6 +564,16 @@ async function handleApi(req, res, url) {
       const tools = await client.listTools({ force: true });
       session.mcp = client;
       session.token = token;
+      // 从演示切到实时：快照带来的菜单 / 营养库 / 1+1 索引全部作废，强制重新拉
+      if (session.demo) {
+        session.demo = false;
+        session.demoMeta = null;
+        session.menu = [];
+        session.library = new nutrition.NutritionLibrary();
+        session.comboIndex = null;
+        session.comboStore = null;
+        session.slotAvailability = null;
+      }
       return sendJson(res, 200, {
         ok: true,
         toolCount: tools.length,
@@ -679,7 +699,14 @@ async function handleApi(req, res, url) {
       session.storeContext.city = hit.plan.city;
       session.storeContext.keyword = hit.plan.keyword;
 
-      return sendJson(res, 200, { ok: true, stores, args: hit.args, attempts });
+      return sendJson(res, 200, {
+        ok: true,
+        stores,
+        args: hit.args,
+        attempts,
+        demo: Boolean(session.demo),
+        note: session.demo ? '演示模式只有快照里的这一家门店；填入自己的 MCP Token 后可搜索任意门店' : undefined,
+      });
     } catch (err) {
       return sendJson(res, 200, { ok: false, error: err.message });
     }
@@ -787,10 +814,12 @@ async function handleApi(req, res, url) {
       // 营养库决定符号挑选的优先级：优先选能算出营养的餐品
       await ensureLibrary();
 
-      const symbols = slot.pickSymbols(session.menu, {
-        // 与 nutritionFor 保持同一套判定，避免把套餐误判为「有营养」而排到前面
-        hasNutrition: (m) => !!nutritionFor(m).nutrition,
-      });
+      const symbols = (session.mcp && typeof session.mcp.symbolsOverride === 'function')
+        ? session.mcp.symbolsOverride(session.menu)
+        : slot.pickSymbols(session.menu, {
+          // 与 nutritionFor 保持同一套判定，避免把套餐误判为「有营养」而排到前面
+          hasNutrition: (m) => !!nutritionFor(m).nutrition,
+        });
       if (!symbols.length) return sendJson(res, 200, { ok: false, error: '菜单中没有可用于老虎机的餐品图片' });
 
       // 图片本地化：下载一次后走本地路径，避免前端依赖外网、也避免每次刷新重复请求 CDN
@@ -831,6 +860,8 @@ async function handleApi(req, res, url) {
         },
         availabilityChecked: availability.__checked === true,
         unavailableCount: unavailable.length,
+        demo: Boolean(session.demo),
+        demoSnapshotAt: session.demo && session.demoMeta ? session.demoMeta.generatedAt : null,
       });
     } catch (err) {
       return sendJson(res, 200, { ok: false, error: err.message });
@@ -1176,12 +1207,64 @@ const server = http.createServer(async (req, res) => {
 });
 
 /**
+ * 启用演示模式：用 demo/demo-snapshot.json 里的官方真实数据快照充当 MCP 数据源。
+ *
+ * 目的：公网试玩不需要（也不应该）内置任何人的 Token。快照是一整场真实会话的
+ * 菜单 + 营养库 + 逐件单价 + 286 种三连组合的真实计价结果 + 1+1 套餐价，
+ * 页面照着跑，所有数字都能和当时接口对上，只是时点固定。
+ *
+ * 关掉：MCSHAKE_DEMO=0（例如本地只想连实时）。
+ */
+async function enableDemo() {
+  if (String(process.env.MCSHAKE_DEMO || '') === '0') return false;
+  const snap = demoSource.loadSnapshot();
+  if (!snap) return false;
+
+  const client = new demoSource.DemoMcpClient(snap);
+  session.mcp = client;
+  session.demo = true;
+  session.demoMeta = {
+    generatedAt: snap.generatedAt,
+    storeName: (snap.store || {}).storeName || '',
+    reservationDate: snap.reservationDate || null,
+    symbolCount: (snap.symbols || []).length,
+    tripleCount: Object.keys(snap.triples || {}).length,
+  };
+
+  // 预置门店与菜单：首屏直接可摇，不需要先选门店
+  const store = snap.store || {};
+  session.storeContext = {
+    storeCode: String(store.storeCode || ''),
+    storeId: String(store.storeCode || ''),
+    storeName: store.storeName || '',
+    storeAddress: store.storeAddress || '',
+    city: store.city || '',
+    businessStatus: store.businessStatus ?? null,
+    businessHours: store.businessStartTime ? `${store.businessStartTime}-${store.businessEndTime}` : null,
+  };
+  session.menu = snap.menu.map((m) => ({ ...m }));
+
+  const lib = new nutrition.NutritionLibrary();
+  lib.load(snap.nutrition);
+  session.library = lib;
+
+  return true;
+}
+
+/**
  * 若环境变量提供了 Token，启动时自动连接，免去每次重启后手工填写。
  * 用法：MCD_MCP_TOKEN=xxx node server.js
+ * 没有 Token 时退化为演示模式（快照重放），保证线上任何人打开都能玩。
  */
 async function autoConnect() {
   const token = process.env.MCD_MCP_TOKEN;
-  if (!token) return;
+  if (!token) {
+    const ok = await enableDemo();
+    console.log(ok
+      ? `  演示模式已启用：${session.demoMeta.storeName}（快照于 ${session.demoMeta.generatedAt}）`
+      : '  未提供 Token 且没有可用快照，页面会提示填写 MCP Token');
+    return;
+  }
   try {
     const client = new McpClient({ token });
     await client.connect();
@@ -1189,7 +1272,8 @@ async function autoConnect() {
     session.mcp = client;
     console.log('  已使用环境变量 MCD_MCP_TOKEN 自动连接 MCP 服务');
   } catch (err) {
-    console.log(`  自动连接失败：${err.message}`);
+    console.log(`  自动连接失败：${err.message}，改试演示模式`);
+    await enableDemo();
   }
 }
 
@@ -1198,9 +1282,9 @@ server.listen(PORT, HOST, () => {
   console.log('  麦摇摇 McShake · 麦当劳营养账本与凑单优化器');
   console.log(`  访问 http://${HOST}:${PORT}`);
   console.log('');
-  console.log('  打开页面后填入麦当劳 MCP Token（或在下方用环境变量自动连接）。');
+  console.log('  无 Token：自动进入演示模式，用 demo/demo-snapshot.json 的官方数据快照重放。');
+  console.log('  有 Token：页面顶部填入，或 MCD_MCP_TOKEN=xxx node server.js 自动连接实时接口。');
   console.log('  提示：MCP Token 仅在本次进程内存中保存，不会写入磁盘。');
-  console.log('  也可通过环境变量自动连接：MCD_MCP_TOKEN=xxx node server.js');
   console.log('');
   autoConnect();
 });

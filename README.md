@@ -2,9 +2,13 @@
 
 > 2026 麦当劳程序员创意开发大赛参赛作品 · 全程使用 **WorkBuddy** 开发
 >
-> [![Node](https://img.shields.io/badge/Node-22%2B-3c873a)](https://nodejs.org) [![Dependencies](https://img.shields.io/badge/dependencies-0-blue)](#安装方法) [![Tests](https://img.shields.io/badge/tests-172%20passed-success)](test.js) [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+> [![Node](https://img.shields.io/badge/Node-22%2B-3c873a)](https://nodejs.org) [![Dependencies](https://img.shields.io/badge/dependencies-0-blue)](#安装方法) [![Tests](https://img.shields.io/badge/tests-182%20passed-success)](test.js) [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 摇一摇老虎机，摇出你这一餐的营养账本和最省买法。
+
+> **线上试玩**：<https://mcshake.app.workbuddy.host/?sharecode=AMBVYTIUXU>
+> 打开即可摇，**不需要任何 Token**。页面数据来自官方接口的真实快照（含抓取时点与门店名），
+> 想摇自己常去的门店，在页面顶部填自己的 MCP Token 即可切到实时接口。详见[线上试玩与演示模式](#线上试玩与演示模式)。
 
 三个滚轮的符号全部取自**你选定门店的真实在售菜单**，停下后立刻给出营养汇总（对标中国食品标签 NRV 参考值）与 `calculate-price` 真实试算金额——每件单价、被分摊到的凑单优惠、相当于打几折，都列清楚。
 
@@ -32,9 +36,48 @@
 
 > 动图为真实交互录屏（Playwright + CDP screencast 抓帧），未做任何拼接或美化；金额与营养值都是那一次真实接口调用的返回。
 
+## 线上试玩与演示模式
+
+**<https://mcshake.app.workbuddy.host/?sharecode=AMBVYTIUXU>**
+
+线上试玩是公网的，任何人都能打开，所以**不能**在服务端内置任何人的 MCP Token——那既会泄漏凭据，也会被人刷爆配额，还违反 MCP「个人非商业用途」的条款。这里的做法是把一场真实会话抓成快照，用快照重放：
+
+| 快照里有什么 | 怎么来的 |
+|---|---|
+| 门店菜单（116 项，含名称与官方餐品图） | `query-meals` + 逐件 `query-meal-detail` |
+| 营养库 160 条 | `list-nutrition-foods` 原始响应 |
+| 逐件真实单价 32 项（滚轮符号 + 1+1 子件） | 逐件 `calculate-price` |
+| 全部 **286 种三连组合**的真实计价结果 | 11 个符号的三元组合逐个 `calculate-price`，含真实优惠与逐件分摊 |
+| 两套 1+1 随心配的分区结构与套餐基础价 | `query-meal-detail` 的 `rounds` + 套餐价试算，并用另外两组子件验算 |
+
+`src/demo-mcp.js` 把这个快照包装成一个**同签名的 MCP 客户端**（`callTool` / `getToolSchema` / `callToolWithFallback`），服务端业务逻辑一行都没改：菜单加载、营养匹配、折扣分摊、1+1 拼单照旧跑，只是数据源从网络换成了快照。
+
+三条不能破的底线：
+
+1. **界面必须标明非实时**。页面顶部有黄色「演示数据」条，写明门店、抓取时点、以及「286 种组合的计价结果都是当次的真实响应」。
+2. **快照里没有的组合按真实单价合成，不编折扣**；单价也没有的餐品直接返回失败，而不是给个 0。
+3. **未覆盖的工具直接报错**（如 `draw-lottery`），不返回假数据。
+
+启动行为：
+
+```bash
+node server.js                    # 无 Token → 自动进演示模式，读 demo/demo-snapshot.json
+MCD_MCP_TOKEN=xxx node server.js  # 有 Token → 实时接口，演示模式关闭
+MCSHAKE_DEMO=0 node server.js     # 强制关掉演示模式
+```
+
+页面顶部的「连接 MCP」随时可以填自己的 Token，连上即切到实时接口（快照带来的菜单、营养库、1+1 索引会全部作废并重新拉取）。
+
+快照过期了想更新，重新抓一份即可（约 20 秒、450 次调用）：
+
+```bash
+MCD_MCP_TOKEN=xxx node scripts/build-demo-snapshot.js
+```
+
 ## 目录
 
 - [演示](#演示)
+- [线上试玩与演示模式](#线上试玩与演示模式)
 - [项目介绍](#项目介绍)
 - [目标用户](#目标用户)
 - [安装方法](#安装方法)
@@ -187,8 +230,13 @@ $ node server.js
 │   ├── slot.js              # 符号精选、概率表开奖、赔付
 │   ├── nutrition.js         # 餐品→营养匹配、NRV 计算、彩蛋文案
 │   ├── combo.js             # 1+1 随心配分区索引、拼单匹配、套餐折扣
+│   ├── demo-mcp.js          # 演示模式：把官方数据快照包装成同签名的 MCP 客户端
 │   └── optimizer.js         # 计价结果归一化、折扣分摊、折扣文案
-├── test.js                  # 核心算法自测（145 项，无需 Token）
+├── demo/
+│   └── demo-snapshot.json   # 线上试玩用的官方数据快照（238 KB，含 286 种组合的真实计价）
+├── scripts/
+│   └── build-demo-snapshot.js  # 重新抓取快照（约 20 秒）
+├── test.js                  # 核心算法自测（155 项，无需 Token）
 ├── test-integration.js      # 协议层集成测试（27 项，内置模拟 MCP 服务）
 ├── docs/
 │   ├── demo-spin.gif        # 操作演示：SPIN → 停位 → 营养与计价 → 命中 1+1
@@ -221,11 +269,11 @@ $ node server.js
 ## 测试
 
 ```bash
-node test.js              # 145 项，核心算法（无需 Token、不联网）
+node test.js              # 155 项，核心算法（无需 Token、不联网）
 node test-integration.js  # 27 项，协议层（内置模拟 MCP 服务）
 ```
 
-共 172 项断言，覆盖符号精选、概率支付表、开奖画面一致性（5000 次循环）、营养匹配与 NRV、计价归一化与折扣分摊、1+1 分区索引与拼单匹配、门店参数拆分、SSE/JSON 双格式握手、会话保持、401/429、限流、官方表格格式解析与混合文本 JSON 提取。
+共 182 项断言，覆盖符号精选、概率支付表、开奖画面一致性（5000 次循环）、营养匹配与 NRV、计价归一化与折扣分摊、1+1 分区索引与拼单匹配、门店参数拆分、SSE/JSON 双格式握手、会话保持、401/429、限流、官方表格格式解析、混合文本 JSON 提取，以及演示快照的自洽性（三连命中快照原样返回、套餐价 = 基础价 + 差价、未知餐品不给假价格）。
 
 ## 边界与合规
 
