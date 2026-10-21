@@ -1,0 +1,30 @@
+# 运行时产物
+data/
+server.log
+*.log
+
+# 餐品图片：来自麦当劳官方 CDN（menu-img.mcd.cn），属麦当劳版权素材，
+# 不随本仓库分发。首次运行时由 localizeImages() 自动下载到本地缓存；
+# 未缓存时前端自动回退到官方 CDN 原始地址。
+public/img/slot/
+
+# 调试抓取的接口响应（可能含账号信息，不入库）
+connect.json
+tools.json
+sym.json
+sym2.json
+codes.json
+
+# 环境变量与密钥
+.env
+.env.local
+*.token
+
+# MCP Token 绝不入库：仅通过环境变量或页面表单传入
+
+# 依赖与编辑器
+node_modules/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

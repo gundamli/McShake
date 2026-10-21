@@ -1,0 +1,1620 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>麦摇摇 McShake · 摇出今日一餐</title>
+<style>
+  :root {
+    --mcd-red: #d62d31;
+    --mcd-red-dark: #8f1c1f;
+    --mcd-yellow: #ffc72c;
+    --mcd-yellow-dark: #d19a00;
+    --ink: #16121f;
+    --screen: #0d1020;
+    --screen-line: rgba(120, 220, 255, 0.08);
+    --paper: #f7f2e7;
+    --mono: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, "Courier New", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 24px 16px 60px;
+    background: var(--ink);
+    background-image:
+      linear-gradient(var(--screen-line) 1px, transparent 1px),
+      radial-gradient(circle at 50% 0%, #2a2340 0%, var(--ink) 60%);
+    background-size: 100% 4px, 100% 100%;
+    font-family: var(--mono);
+    color: #f4f1ea;
+    letter-spacing: 0.04em;
+  }
+
+  .wrap { max-width: 760px; margin: 0 auto; }
+
+  /* ---------- 顶部标题 ---------- */
+  .title {
+    text-align: center;
+    margin-bottom: 18px;
+  }
+  .title h1 {
+    margin: 0;
+    font-size: 22px;
+    letter-spacing: 0.14em;
+    color: var(--mcd-yellow);
+    text-shadow: 3px 3px 0 var(--mcd-red-dark);
+  }
+  /* 中英混排时英文用更小的字号，避免把中文标题拉散 */
+  .title h1 .en {
+    font-size: 15px;
+    letter-spacing: 0.06em;
+    margin-left: 6px;
+    color: #ffe9a8;
+  }
+  .title p {
+    margin: 8px 0 0;
+    font-size: 11px;
+    color: #9a92b5;
+    letter-spacing: 0.1em;
+  }
+
+  /* ---------- 标题下方的 Token 入口 ---------- */
+  .title-tools {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .token-status { font-size: 11px; color: #7de2c3; }
+  .token-status.off { color: #ff9d9d; }
+  .token-panel {
+    margin-top: 10px;
+    padding: 12px;
+    background: #12162a;
+    border: 2px solid #2b2f4a;
+  }
+  .token-panel input {
+    width: 100%;
+    padding: 8px 10px;
+    background: #0a0c18;
+    border: 2px solid #3a3f66;
+    color: #e6e2ff;
+    font-family: inherit;
+    font-size: 12px;
+    box-sizing: border-box;
+  }
+  .token-panel input:focus { outline: none; border-color: var(--mcd-yellow); }
+  .token-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .token-hint { font-size: 10px; color: #7a749c; margin-top: 8px; line-height: 1.6; }
+
+  /* ---------- 底部一键下单 ---------- */
+  .order-bar {
+    margin-top: 18px;
+    padding: 16px;
+    background: #12162a;
+    border: 4px solid #2b2f4a;
+    text-align: center;
+  }
+  .order-btn {
+    font-family: inherit;
+    font-size: 15px;
+    padding: 12px 34px;
+    background: var(--mcd-yellow);
+    color: #4a1214;
+    border: 4px solid #fff2c0;
+    box-shadow: 0 5px 0 #9a7a10;
+    cursor: pointer;
+    letter-spacing: 0.1em;
+  }
+  .order-btn:hover:not(:disabled) { background: #ffd452; }
+  .order-btn:active:not(:disabled) { transform: translateY(3px); box-shadow: 0 2px 0 #9a7a10; }
+  /* 无可用优惠时置灰，避免用户点了才发现下不了单 */
+  .order-btn:disabled {
+    background: #3a3f66; color: #7a749c; border-color: #4a4f7a;
+    box-shadow: 0 5px 0 #232747; cursor: not-allowed;
+  }
+  .order-note {
+    font-size: 11px; color: #7a749c; margin-top: 10px; letter-spacing: 0.08em;
+    transition: color 0.2s;
+  }
+  .order-note.flash { color: var(--mcd-yellow); }
+
+  /* ---------- 换门店弹窗 ---------- */
+  .modal {
+    position: fixed; inset: 0; z-index: 50;
+    background: rgba(6, 8, 18, 0.82);
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .modal-box {
+    background: #12162a;
+    border: 4px solid var(--mcd-red);
+    box-shadow: 0 0 0 4px #0a0c18, 0 12px 0 rgba(0, 0, 0, 0.35);
+    padding: 20px;
+    width: 100%; max-width: 460px;
+    max-height: 86vh; overflow-y: auto;
+    text-align: center;
+  }
+  .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .modal-head h3 {
+    margin: 0; font-size: 14px; color: var(--mcd-yellow); letter-spacing: 0.1em;
+  }
+  .modal-close {
+    font-family: inherit; font-size: 18px; line-height: 1;
+    background: transparent; border: 2px solid #4a4f7a; color: #cfd6ff;
+    width: 28px; height: 28px; cursor: pointer; padding: 0;
+  }
+  .modal-close:hover { border-color: var(--mcd-yellow); color: var(--mcd-yellow); }
+  .modal-desc { font-size: 11px; color: #9a92b5; margin: 10px 0 14px; line-height: 1.7; }
+  .store-input {
+    padding: 10px; font-family: var(--mono); font-size: 12px;
+    background: #0d1020; border: 2px solid #4a4f7a; color: #f4f1ea; width: 190px;
+  }
+  .store-input:focus { outline: none; border-color: var(--mcd-yellow); }
+  .store-results { margin-top: 12px; font-size: 11px; color: #cfd6ff; line-height: 1.9; }
+  .store-tip { font-size: 10px; color: #7a749c; margin-top: 10px; line-height: 1.7; }
+
+  /* ---------- 机身 ---------- */
+  .cabinet {
+    background: var(--mcd-red);
+    border: 4px solid #4a1214;
+    box-shadow: 8px 8px 0 #000, inset 0 0 0 4px var(--mcd-red-dark);
+    padding: 16px;
+  }
+
+  /* 跑马灯灯泡 */
+  .marquee {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .bulb {
+    width: 9px; height: 9px;
+    background: #6b1a1c;
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 1px #000;
+  }
+  .bulb.on {
+    background: var(--mcd-yellow);
+    box-shadow: 0 0 8px var(--mcd-yellow), inset 0 0 0 1px #000;
+  }
+
+  /* 屏幕 */
+  .screen {
+    background: var(--screen);
+    border: 4px solid #05060d;
+    box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.9);
+    padding: 14px;
+  }
+
+  /* HUD */
+  .hud {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    color: #7de2c3;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .hud .coin { color: var(--mcd-yellow); font-size: 14px; }
+  .hud .bet { color: #9a92b5; }
+
+  /* ---------- 滚轮 ---------- */
+  .reels {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    background: #05060d;
+    border: 3px solid #2b2f4a;
+    padding: 8px;
+  }
+  .reel-window {
+    position: relative;
+    height: 132px;
+    overflow: hidden;
+    background: #1b1f36;
+    border: 2px solid #3a3f66;
+  }
+  .reel-strip { will-change: transform; }
+
+  .cell {
+    height: 132px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 4px;
+  }
+  .cell img {
+    width: 88px;
+    height: 84px;
+    object-fit: contain;
+    display: block;
+  }
+  .cell .cname {
+    font-size: 9px;
+    color: #cfd6ff;
+    text-align: center;
+    line-height: 1.2;
+    max-width: 96px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .cell .fallback {
+    width: 88px; height: 84px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--paper);
+    color: var(--mcd-red);
+    font-size: 13px;
+    font-weight: 700;
+    border: 2px solid var(--mcd-red-dark);
+  }
+
+  /* 中奖线 */
+  .payline {
+    position: absolute;
+    left: 0; right: 0;
+    top: 50%;
+    height: 132px;
+    transform: translateY(-50%);
+    border-top: 2px dashed rgba(255, 199, 44, 0.55);
+    border-bottom: 2px dashed rgba(255, 199, 44, 0.55);
+    pointer-events: none;
+  }
+
+  /* 中奖高亮 */
+  .reel-window.win {
+    border-color: var(--mcd-yellow);
+    box-shadow: 0 0 0 2px var(--mcd-yellow), 0 0 14px rgba(255, 199, 44, 0.6);
+    animation: blink 0.5s steps(2) infinite;
+  }
+  @keyframes blink { 50% { box-shadow: 0 0 0 2px var(--mcd-red), 0 0 14px rgba(214, 45, 49, 0.7); } }
+
+  /* 中奖提示条 */
+  .banner {
+    margin-top: 12px;
+    min-height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    letter-spacing: 0.12em;
+    background: #0a0d18;
+    border: 2px solid #2b2f4a;
+    color: #9a92b5;
+    text-align: center;
+    padding: 6px;
+  }
+  .banner.win { color: var(--mcd-yellow); border-color: var(--mcd-yellow); }
+  .banner.jackpot {
+    color: #fff;
+    background: var(--mcd-red);
+    border-color: var(--mcd-yellow);
+    animation: blink 0.4s steps(2) infinite;
+  }
+
+  /* ---------- 控制区 ---------- */
+  .controls {
+    margin-top: 14px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .spin-btn {
+    flex: 1;
+    min-width: 180px;
+    padding: 16px 20px;
+    font-family: var(--mono);
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    color: #3a2600;
+    background: var(--mcd-yellow);
+    border: 4px solid #4a1214;
+    box-shadow: 0 6px 0 var(--mcd-yellow-dark);
+    cursor: pointer;
+    text-transform: uppercase;
+  }
+  .spin-btn:hover:not(:disabled) { background: #ffd76b; }
+  .spin-btn:active:not(:disabled) { transform: translateY(4px); box-shadow: 0 2px 0 var(--mcd-yellow-dark); }
+  .spin-btn:disabled { background: #7a6a3a; color: #2a2418; cursor: not-allowed; box-shadow: 0 6px 0 #4a3f22; }
+
+  .mini-btn {
+    padding: 10px 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: #f4f1ea;
+    background: #2b2f4a;
+    border: 2px solid #4a4f7a;
+    cursor: pointer;
+    letter-spacing: 0.08em;
+  }
+  .mini-btn:hover { background: #3a3f66; }
+
+  /* ---------- 结果面板 ---------- */
+  .panel {
+    margin-top: 20px;
+    background: #12162a;
+    border: 4px solid #2b2f4a;
+    padding: 14px;
+  }
+  .panel h2 {
+    margin: 0 0 12px;
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    color: var(--mcd-yellow);
+  }
+  .meal-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .meal-card {
+    flex: 1 1 180px;
+    background: #0d1020;
+    border: 2px solid #2b2f4a;
+    padding: 10px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .meal-card img { width: 52px; height: 52px; object-fit: contain; background: var(--paper); }
+  .meal-card .mn { font-size: 12px; color: #f4f1ea; }
+  .meal-card .mv { font-size: 10px; color: #9a92b5; margin-top: 4px; line-height: 1.5; }
+
+  .nutri-grid {
+    margin-top: 14px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    gap: 8px;
+  }
+  .nutri-box {
+    background: #0d1020;
+    border: 2px solid #2b2f4a;
+    padding: 8px;
+    text-align: center;
+  }
+  .nutri-box .k { font-size: 10px; color: #9a92b5; }
+  .nutri-box .v { font-size: 17px; color: var(--mcd-yellow); margin: 4px 0 2px; }
+  .nutri-box .p { font-size: 9px; color: #6f6a8c; }
+  .nutri-box.warn .v { color: #ff8a7a; }
+
+  .price-box {
+    margin-top: 12px;
+    background: #0d1020;
+    border: 2px solid #2b2f4a;
+    padding: 12px;
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .price-box .pv { font-size: 22px; color: var(--mcd-yellow); }
+  .price-box .pd { font-size: 11px; color: #7de2c3; }
+  .price-box .po { font-size: 11px; color: #9a92b5; }
+
+  /* 1+1 随心配：能拼成套餐时高亮，拼不上则弱化说明 */
+  .combo-hit {
+    width: 100%;
+    margin-top: 10px;
+    border: 2px solid var(--mcd-yellow);
+    background: rgba(255, 199, 44, .10);
+    padding: 8px 10px;
+    font-size: 11px;
+  }
+  .combo-hit .ch-head { color: var(--mcd-yellow); font-weight: bold; margin-bottom: 4px; letter-spacing: .5px; }
+  .combo-hit .ch-body { color: #e6e2ff; line-height: 1.7; }
+  .combo-hit .ch-body b { color: #7de2c3; }
+  .combo-miss { width: 100%; margin-top: 10px; font-size: 11px; color: #6f6a8c; }
+
+  /* 每件商品的价格明细表 */
+  .price-lines {
+    width: 100%;
+    margin-top: 10px;
+    border-top: 2px dashed #2b2f4a;
+    padding-top: 8px;
+    font-size: 11px;
+  }
+  .price-line {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 4px 0;
+    border-bottom: 1px dotted #232747;
+  }
+  .price-line:last-child { border-bottom: none; }
+  .price-line .pl-name { flex: 1; color: #e6e2ff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .price-line .pl-unit { color: #9a92b5; }
+  .price-line .pl-orig { color: #6f6a8d; text-decoration: line-through; }
+  .price-line .pl-pay { color: var(--mcd-yellow); font-weight: bold; min-width: 52px; text-align: right; }
+  .price-line .pl-off {
+    background: var(--mcd-red);
+    color: #fff;
+    padding: 1px 6px;
+    border: 1px solid #ff6a6a;
+    font-size: 10px;
+    min-width: 40px;
+    text-align: center;
+  }
+  .price-line .pl-off.none { background: transparent; border-color: #2b2f4a; color: #5c5880; }
+  .price-line .pl-saved { color: #7de2c3; min-width: 48px; text-align: right; }
+  /* 整单折扣条 */
+  .price-summary-off {
+    margin-top: 8px;
+    padding: 6px 8px;
+    background: #1a0e14;
+    border: 2px solid var(--mcd-red);
+    color: #ffd0c8;
+    font-size: 11px;
+  }
+  .price-summary-off b { color: var(--mcd-yellow); }
+
+  .notes { margin-top: 12px; }
+  .note {
+    font-size: 11px;
+    padding: 7px 10px;
+    margin-bottom: 6px;
+    border-left: 4px solid #4a4f7a;
+    background: #0d1020;
+    line-height: 1.6;
+  }
+  .note.warn { border-left-color: #ff8a7a; color: #ffd0c8; }
+  .note.good { border-left-color: #7de2c3; color: #c9f5e6; }
+  .note.info { border-left-color: #6fa8ff; color: #d3e4ff; }
+  /* 无厘头彩蛋：不参与说教，只负责让你吃得心安理得 */
+  .note.fun {
+    border-left-color: var(--mcd-yellow);
+    background: #1b1408;
+    color: #ffe6a8;
+    font-style: italic;
+  }
+  .note.fun::before { content: '🎲 '; font-style: normal; }
+
+  /* ---------- 提示 / 引导 ---------- */
+  .notice {
+    background: #12162a;
+    border: 4px solid var(--mcd-red);
+    padding: 18px;
+    text-align: center;
+  }
+  .notice h3 { margin: 0 0 10px; font-size: 14px; color: var(--mcd-yellow); letter-spacing: 0.1em; }
+  .notice p { margin: 0 0 14px; font-size: 12px; color: #cfd6ff; line-height: 1.7; }
+  .notice input {
+    padding: 10px;
+    font-family: var(--mono);
+    font-size: 12px;
+    background: #0d1020;
+    border: 2px solid #4a4f7a;
+    color: #f4f1ea;
+    width: 180px;
+  }
+  .notice input:focus { outline: none; border-color: var(--mcd-yellow); }
+  .store-results { margin-top: 12px; font-size: 11px; color: #cfd6ff; line-height: 2; }
+  .hidden { display: none !important; }
+
+  .foot {
+    margin-top: 18px;
+    font-size: 10px;
+    color: #6f6a8c;
+    line-height: 1.8;
+    text-align: center;
+  }
+  .foot a { color: #9a92b5; }
+
+  @media (max-width: 560px) {
+    .cell img { width: 72px; height: 68px; }
+    .reel-window, .cell { height: 116px; }
+    .title h1 { font-size: 17px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="title">
+    <h1>麦摇摇<span class="en">McShake</span></h1>
+    <p>摇出今日一餐 · 图片与营养数据均来自麦当劳 MCP 真实接口</p>
+
+    <!-- Token 入口：不必再跳到另一个配置页，在这里连上就能摇 -->
+    <div class="title-tools">
+      <button class="mini-btn" id="tokenBtn">连接 MCP</button>
+      <span class="token-status" id="tokenStatus"></span>
+    </div>
+    <div id="tokenPanel" class="token-panel hidden">
+      <input id="tokenInput" type="password" placeholder="粘贴麦当劳 MCP Token" autocomplete="off" spellcheck="false">
+      <div class="token-row">
+        <button class="mini-btn" id="tokenSubmit">连接</button>
+        <button class="mini-btn" id="tokenCancel">取消</button>
+      </div>
+      <div class="token-hint">
+        Token 仅保存在本次服务进程的内存中，不会写入磁盘、不随页面刷新保留。<br>
+        也可启动服务时用环境变量自动连接：MCD_MCP_TOKEN=xxx node server.js
+      </div>
+    </div>
+  </div>
+
+  <!-- 引导面板：未选门店或未连接时显示 -->
+  <div id="notice" class="notice hidden">
+    <h3 id="noticeTitle">需要准备</h3>
+    <p id="noticeText"></p>
+    <div id="noticeActions"></div>
+  </div>
+
+  <!-- 老虎机 -->
+  <div id="machine" class="cabinet hidden">
+    <div class="marquee" id="marquee"></div>
+
+    <div class="screen">
+      <div class="hud">
+        <span class="coin">CREDIT <span id="credits">200</span></span>
+        <span class="bet">BET 10 / SPIN</span>
+        <span id="storeTag"></span>
+      </div>
+
+      <div class="reels">
+        <div class="reel-window"><div class="reel-strip" id="strip0"></div></div>
+        <div class="reel-window"><div class="reel-strip" id="strip1"></div></div>
+        <div class="reel-window"><div class="reel-strip" id="strip2"></div></div>
+        <div class="payline"></div>
+      </div>
+
+      <div class="banner" id="banner">按 SPIN 开始</div>
+    </div>
+
+    <div class="controls">
+      <button class="spin-btn" id="spinBtn">SPIN</button>
+      <button class="mini-btn" id="soundBtn" title="同时控制音效与背景音乐">声音: 开</button>
+      <button class="mini-btn" id="reloadBtn">换门店</button>
+    </div>
+  </div>
+
+  <!-- 结果面板 -->
+  <div id="resultPanel" class="panel hidden">
+    <h2>这一餐的营养账</h2>
+    <div class="meal-row" id="mealRow"></div>
+    <div class="nutri-grid" id="nutriGrid"></div>
+    <div class="price-box" id="priceBox"></div>
+    <div class="notes" id="notes"></div>
+  </div>
+
+  <!-- 一键下单：占位入口，具体下单流程尚未实现 -->
+  <div class="order-bar">
+    <button class="order-btn" id="orderBtn" disabled>🛒 一键下单</button>
+    <div class="order-note" id="orderNote">先摇出带优惠的组合，才谈得上下单</div>
+  </div>
+
+  <div class="foot">
+    <div>金币仅供娱乐，不具任何实际价值。滚轮只收录单品（套餐营养取决于搭配，已剔除）；若两件单品正好能拼成 1+1 随心配，会按更便宜的套餐价结算。营养数据来自麦当劳官方营养库。</div>
+  </div>
+</div>
+
+<!-- 换门店弹窗：与首次进入共用同一套选择器 -->
+<div id="storeModal" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-head">
+      <h3 id="storeModalTitle">选择门店</h3>
+      <button class="modal-close" id="storeModalClose" aria-label="关闭">×</button>
+    </div>
+    <p class="modal-desc">老虎机从门店在售菜单取真实餐品图片，先选一家门店。城市与地标分开填（接口对城市名有校验，混在一起会搜不到）。</p>
+    <div id="storeModalBody"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---------------------------------------------------------------- 常量
+  var SPIN_COST = 10;
+  var START_CREDITS = 200;
+  var ODDS = { jackpot: 0.015, triple: 0.07, pair: 0.25 };
+  var ROUNDS = 3;              // 每列滚动圈数
+  var STORE_KEY = 'mcd-slot-credits';
+
+  var state = {
+    symbols: [],
+    credits: START_CREDITS,
+    spinning: false,
+    prevIdx: [0, 0, 0],
+    muted: false,
+    cellHeight: 132,
+    lastTargets: null,
+  };
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  // ---------------------------------------------------------------- 音效（Web Audio 生成，无外部资源）
+  var actx = null;
+  function beep(freq, dur, type, gain) {
+    if (state.muted) return;
+    try {
+      if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+      if (actx.state === 'suspended') actx.resume();
+      var o = actx.createOscillator();
+      var g = actx.createGain();
+      o.type = type || 'square';
+      o.frequency.value = freq;
+      g.gain.setValueAtTime(gain || 0.05, actx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + dur);
+      o.connect(g); g.connect(actx.destination);
+      o.start(); o.stop(actx.currentTime + dur);
+    } catch (_) { /* 音频不可用时静默降级 */ }
+  }
+  /**
+   * 8bit 背景音乐（Web Audio 程序化生成，零外部资源）
+   *
+   * 用方波主旋律 + 三角波贝斯 + 噪声打击乐三轨叠出芯片音乐质感。
+   * 旋律动机取自门店里那段「ba da ba ba ba」的五音节奏型，
+   * 和声走 C - Am - F - G 的经典循环，8 小节一轮。
+   *
+   * 调度使用 Web Audio 的 lookahead 模式（每 25ms 唤醒一次，提前 150ms 排音符），
+   * 而不是靠 setTimeout 直接触发——后者在页面卡顿时会明显跑拍。
+   */
+  var bgm = {
+    playing: false,
+    timer: null,
+    step: 0,
+    nextTime: 0,
+    bpm: 118,
+    lookahead: 25,        // 调度检查间隔（毫秒）
+    scheduleAhead: 0.15,  // 提前调度窗口（秒）
+    master: null,
+  };
+
+  // 每小节 4 个旋律事件：[起始 16 分音符位, MIDI 音高, 时值(16 分音符数)]
+  var BGM_MELODY = [
+    [[0, 67, 3], [3, 69, 3], [6, 72, 4], [10, 69, 6]],  // C:  ba da ba ba ba
+    [[0, 69, 3], [3, 72, 3], [6, 76, 4], [10, 72, 6]],  // Am
+    [[0, 65, 3], [3, 69, 3], [6, 72, 4], [10, 69, 6]],  // F
+    [[0, 67, 3], [3, 71, 3], [6, 74, 4], [10, 67, 6]],  // G
+    [[0, 72, 3], [3, 76, 3], [6, 79, 4], [10, 76, 6]],  // C（上行八度）
+    [[0, 69, 3], [3, 76, 3], [6, 81, 4], [10, 76, 6]],  // Am
+    [[0, 65, 2], [2, 67, 2], [4, 69, 2], [6, 72, 4], [10, 74, 6]], // F（级进上行）
+    [[0, 67, 2], [2, 71, 2], [4, 74, 2], [6, 79, 4], [10, 74, 6]], // G（推向顶点）
+  ];
+  var BGM_ROOTS = [48, 45, 41, 43, 48, 45, 41, 43]; // C A F G ×2
+  var BGM_STEPS = BGM_MELODY.length * 16;
+
+  function mtof(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+
+  function ensureAudio() {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === 'suspended') actx.resume();
+    if (!bgm.master) {
+      bgm.master = actx.createGain();
+      bgm.master.gain.value = state.muted ? 0 : 1;
+      bgm.master.connect(actx.destination);
+    }
+    return actx;
+  }
+
+  /** 单个芯片音符：极短 attack 避免爆音，尾部指数衰减 */
+  function bgmNote(midi, at, dur, type, gain) {
+    var o = actx.createOscillator();
+    var g = actx.createGain();
+    o.type = type;
+    o.frequency.value = mtof(midi);
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.linearRampToValueAtTime(gain, at + 0.008);
+    g.gain.setValueAtTime(gain, at + Math.max(0.02, dur * 0.55));
+    g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
+    o.connect(g); g.connect(bgm.master);
+    o.start(at); o.stop(at + dur + 0.02);
+  }
+
+  /** 底鼓：正弦扫频，150Hz 快速滑到 45Hz */
+  function bgmKick(at) {
+    var o = actx.createOscillator();
+    var g = actx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(150, at);
+    o.frequency.exponentialRampToValueAtTime(45, at + 0.11);
+    g.gain.setValueAtTime(0.45, at);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + 0.16);
+    o.connect(g); g.connect(bgm.master);
+    o.start(at); o.stop(at + 0.18);
+  }
+
+  /** 踩镲：白噪声经高通滤波，8bit 鼓机常见做法 */
+  function bgmHat(at, gain) {
+    var len = 0.04;
+    var buf = actx.createBuffer(1, Math.max(1, Math.ceil(actx.sampleRate * len)), actx.sampleRate);
+    var ch = buf.getChannelData(0);
+    for (var i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
+    var src = actx.createBufferSource();
+    src.buffer = buf;
+    var hp = actx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 7000;
+    var g = actx.createGain();
+    g.gain.setValueAtTime(gain, at);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + len);
+    src.connect(hp); hp.connect(g); g.connect(bgm.master);
+    src.start(at); src.stop(at + len);
+  }
+
+  function bgmStep(step, at) {
+    var stepDur = (60 / bgm.bpm) / 4;
+    var bar = Math.floor(step / 16) % BGM_MELODY.length;
+    var pos = step % 16;
+
+    // 主旋律：只在音符起点触发，时值由事件自带
+    var mel = BGM_MELODY[bar];
+    for (var i = 0; i < mel.length; i++) {
+      if (mel[i][0] === pos) bgmNote(mel[i][1], at, mel[i][2] * stepDur * 0.9, 'square', 0.05);
+    }
+
+    // 贝斯：八分音符在根音与五度间跳动
+    var root = BGM_ROOTS[bar];
+    if (pos % 4 === 0) {
+      var bn = (pos === 8 || pos === 12) ? root + 7 : root;
+      bgmNote(bn, at, stepDur * 3.2, 'triangle', 0.15);
+    }
+
+    // 鼓组：底鼓落在正拍与反拍，踩镲走八分、正拍加重
+    if (pos === 0 || pos === 8) bgmKick(at);
+    if (pos % 2 === 0) bgmHat(at, pos % 4 === 0 ? 0.045 : 0.026);
+  }
+
+  function bgmSchedule() {
+    if (!actx) return;
+    var stepDur = (60 / bgm.bpm) / 4;
+    while (bgm.nextTime < actx.currentTime + bgm.scheduleAhead) {
+      bgmStep(bgm.step, bgm.nextTime);
+      bgm.step = (bgm.step + 1) % BGM_STEPS;
+      bgm.nextTime += stepDur;
+    }
+  }
+
+  function bgmStart() {
+    try {
+      ensureAudio();
+    } catch (_) { return false; }
+    if (bgm.playing) return true;
+    bgm.playing = true;
+    bgm.step = 0;
+    bgm.nextTime = actx.currentTime + 0.08;
+    bgm.timer = setInterval(bgmSchedule, bgm.lookahead);
+    return true;
+  }
+
+  function bgmStop() {
+    bgm.playing = false;
+    if (bgm.timer) { clearInterval(bgm.timer); bgm.timer = null; }
+  }
+
+  function bgmApplyMute() {
+    if (bgm.master) bgm.master.gain.value = state.muted ? 0 : 1;
+  }
+
+  function playTick() { beep(880, 0.03, 'square', 0.03); }
+  function playStop() { beep(180, 0.09, 'square', 0.06); }
+  function playWin(level) {
+    if (level === 'jackpot') {
+      [523, 659, 784, 1046, 1318].forEach(function (f, i) {
+        setTimeout(function () { beep(f, 0.16, 'square', 0.07); }, i * 110);
+      });
+    } else if (level === 'triple') {
+      [659, 880, 1174].forEach(function (f, i) {
+        setTimeout(function () { beep(f, 0.14, 'square', 0.06); }, i * 120);
+      });
+    } else if (level === 'pair') {
+      [784, 988].forEach(function (f, i) {
+        setTimeout(function () { beep(f, 0.12, 'square', 0.05); }, i * 100);
+      });
+    } else {
+      beep(220, 0.18, 'sawtooth', 0.04);
+    }
+  }
+
+  // ---------------------------------------------------------------- 开奖逻辑（与服务端 src/slot.js 保持一致）
+  function weightedPick(list) {
+    if (!list.length) return null;
+    var total = list.reduce(function (s, x) { return s + (Number(x.weight) || 1); }, 0);
+    var r = Math.random() * total;
+    for (var i = 0; i < list.length; i++) {
+      r -= Number(list[i].weight) || 1;
+      if (r <= 0) return list[i];
+    }
+    return list[list.length - 1];
+  }
+  function pickOne(list) { return list[Math.floor(Math.random() * list.length)]; }
+  function shuffle(arr) {
+    var a = arr.slice();
+    for (var i = a.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
+  function spin(symbols) {
+    var rares = symbols.filter(function (s) { return s.rare; });
+    var commons = symbols.filter(function (s) { return !s.rare; });
+    var roll = Math.random();
+
+    if (roll < ODDS.jackpot && rares.length) {
+      var jr = weightedPick(rares); return [jr, jr, jr];
+    }
+    if (roll < ODDS.jackpot + ODDS.triple && commons.length) {
+      var tc = weightedPick(commons); return [tc, tc, tc];
+    }
+    if (roll < ODDS.jackpot + ODDS.triple + ODDS.pair) {
+      var a = weightedPick(symbols);
+      var others = symbols.filter(function (s) { return s.id !== a.id; });
+      if (others.length) return shuffle([a, a, weightedPick(others)]);
+      return [a, a, a];
+    }
+    var pool = shuffle(symbols).slice(0, 3);
+    while (pool.length < 3 && symbols.length) pool.push(pickOne(symbols));
+    return pool;
+  }
+  function evaluate(reels) {
+    var counts = {};
+    reels.forEach(function (r) { counts[r.id] = (counts[r.id] || 0) + 1; });
+    var maxCount = 0, hitId = null;
+    Object.keys(counts).forEach(function (k) {
+      if (counts[k] > maxCount) { maxCount = counts[k]; hitId = k; }
+    });
+    if (maxCount === 3) {
+      var t = reels[0];
+      return { level: t.rare ? 'jackpot' : 'triple', payout: t.rare ? 200 : 60,
+               title: t.rare ? '超级大奖' : '三连中奖', desc: '三连「' + t.name + '」' };
+    }
+    if (maxCount === 2) {
+      var h = reels.filter(function (r) { return r.id === hitId; })[0];
+      return { level: 'pair', payout: h.rare ? 15 : 8, title: '小奖', desc: '两连「' + h.name + '」' };
+    }
+    return { level: 'none', payout: 0, title: '未中奖', desc: '三样都不同，但这一餐依然可以看看营养' };
+  }
+
+  // ---------------------------------------------------------------- 滚轮渲染
+  function cellHtml(s, size) {
+    var src = s.image || s.remoteImage;
+    var img = src
+      ? '<img src="' + escapeAttr(src) + '" alt="' + escapeAttr(s.name) + '" loading="eager" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
+        + '<div class="fallback" style="display:none">' + escapeHtml(s.name.slice(0, 3)) + '</div>'
+      : '<div class="fallback">' + escapeHtml(s.name.slice(0, 3)) + '</div>';
+    return '<div class="cell">' + img + '<div class="cname">' + escapeHtml(s.name) + '</div></div>';
+  }
+
+  function buildStrips() {
+    var n = state.symbols.length;
+    for (var col = 0; col < 3; col++) {
+      var strip = $('strip' + col);
+      var html = '';
+      // 重复 4 遍：保证滚动 ROUNDS 圈时不会出现空白
+      for (var rep = 0; rep < 4; rep++) {
+        for (var i = 0; i < n; i++) html += cellHtml(state.symbols[i]);
+      }
+      strip.innerHTML = html;
+      strip.style.transition = 'none';
+      strip.style.transform = 'translateY(0px)';
+    }
+    state.prevIdx = [0, 0, 0];
+  }
+
+  function animateReel(col, targetIdx, duration) {
+    return new Promise(function (resolve) {
+      var strip = $('strip' + col);
+      var n = state.symbols.length;
+      var prev = state.prevIdx[col];
+      var h = state.cellHeight;
+
+      strip.style.transition = 'none';
+      strip.style.transform = 'translateY(' + (-prev * h) + 'px)';
+      void strip.offsetHeight;
+
+      strip.style.transition = 'transform ' + duration + 'ms cubic-bezier(0.12, 0.78, 0.28, 1)';
+      strip.style.transform = 'translateY(' + (-(ROUNDS * n + targetIdx) * h) + 'px)';
+
+      setTimeout(function () {
+        strip.style.transition = 'none';
+        strip.style.transform = 'translateY(' + (-targetIdx * h) + 'px)';
+        state.prevIdx[col] = targetIdx;
+        playStop();
+        resolve();
+      }, duration + 40);
+    });
+  }
+
+  // ---------------------------------------------------------------- 主流程
+  function doSpin() {
+    if (state.spinning) return;
+    if (state.credits < SPIN_COST) {
+      setBanner('金币不足 · 点击右下角补充', '');
+      return;
+    }
+
+    state.spinning = true;
+    state.credits -= SPIN_COST;
+    saveCredits();
+    renderCredits();
+    $('spinBtn').disabled = true;
+    setBanner('转动中…', '');
+    clearWinHighlight();
+
+    var targets = spin(state.symbols);
+    state.lastTargets = targets;
+
+    var ticker = setInterval(playTick, 90);
+    var idxs = targets.map(function (t) {
+      var i = state.symbols.findIndex(function (s) { return s.id === t.id; });
+      return i < 0 ? 0 : i;
+    });
+
+    Promise.all([
+      animateReel(0, idxs[0], 1500),
+      animateReel(1, idxs[1], 1900),
+      animateReel(2, idxs[2], 2300),
+    ]).then(function () {
+      clearInterval(ticker);
+
+      var res = evaluate(targets);
+      state.credits += res.payout;
+      saveCredits();
+      renderCredits();
+
+      if (res.level !== 'none') {
+        highlightWin(targets, res);
+        playWin(res.level);
+        setBanner(res.title + ' +' + res.payout + ' · ' + res.desc, res.level);
+      } else {
+        playWin('none');
+        setBanner(res.title + ' · ' + res.desc, '');
+      }
+
+      state.spinning = false;
+      $('spinBtn').disabled = false;
+
+      loadResult(targets.map(function (t) { return t.code; }));
+    });
+  }
+
+  function highlightWin(targets, res) {
+    var wins = document.querySelectorAll('.reel-window');
+    for (var i = 0; i < wins.length; i++) wins[i].classList.remove('win');
+
+    if (res.level === 'triple' || res.level === 'jackpot') {
+      for (var j = 0; j < wins.length; j++) wins[j].classList.add('win');
+      return;
+    }
+    // 小奖只高亮相同的两格
+    var counts = {};
+    targets.forEach(function (t) { counts[t.id] = (counts[t.id] || 0) + 1; });
+    var hitId = Object.keys(counts).filter(function (k) { return counts[k] === 2; })[0];
+    targets.forEach(function (t, i) {
+      if (t.id === hitId && wins[i]) wins[i].classList.add('win');
+    });
+  }
+  function clearWinHighlight() {
+    var wins = document.querySelectorAll('.reel-window');
+    for (var i = 0; i < wins.length; i++) wins[i].classList.remove('win');
+  }
+
+  function setBanner(text, level) {
+    var b = $('banner');
+    b.textContent = text;
+    b.className = 'banner' + (level ? (level === 'jackpot' ? ' jackpot' : ' win') : '');
+  }
+
+  // ---------------------------------------------------------------- 结果（营养 + 价格）
+  function loadResult(codes) {
+    var panel = $('resultPanel');
+    $('mealRow').innerHTML = '<div class="mv">正在查询营养与价格…</div>';
+    $('nutriGrid').innerHTML = '';
+    $('priceBox').innerHTML = '';
+    $('notes').innerHTML = '';
+    panel.classList.remove('hidden');
+    // 新一轮开奖先复位，避免沿用上一局的优惠状态
+    updateOrderButton(null);
+
+    fetch('/api/slot/result', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ codes: codes }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) {
+          $('mealRow').innerHTML = '<div class="mv">查询失败：' + escapeHtml(d.error || '未知错误') + '</div>';
+          return;
+        }
+        renderResult(d);
+      })
+      .catch(function (err) {
+        $('mealRow').innerHTML = '<div class="mv">查询失败：' + escapeHtml(err.message) + '</div>';
+      });
+  }
+
+  function renderResult(d) {
+    // 餐品卡片
+    $('mealRow').innerHTML = (d.items || []).map(function (it) {
+      var imgSrc = it.image || it.remoteImage;
+      var img = imgSrc
+        ? '<img src="' + escapeAttr(imgSrc) + '" alt="">'
+        : '<div class="fallback" style="width:52px;height:52px">' + escapeHtml(it.name.slice(0, 3)) + '</div>';
+      var val = it.nutrition
+        ? (it.nutrition.energyKcal != null ? it.nutrition.energyKcal + ' kcal' : '—')
+          + ' · 蛋白 ' + (it.nutrition.protein != null ? it.nutrition.protein + 'g' : '—')
+          + ' · 钠 ' + (it.nutrition.sodium != null ? it.nutrition.sodium + 'mg' : '—')
+        : escapeHtml(it.nutritionNote || '暂无营养数据');
+      return '<div class="meal-card">' + img
+        + '<div><div class="mn">' + escapeHtml(it.name) + '</div><div class="mv">' + val + '</div></div></div>';
+    }).join('');
+
+    // 营养汇总
+    var t = (d.summary && d.summary.total) || {};
+    var vs = (d.summary && d.summary.vsNrv) || {};
+    var boxes = [
+      { k: '能量', v: t.energyKcal, u: 'kcal', pct: vs.energy && vs.energy.mealPercent },
+      { k: '蛋白质', v: t.protein, u: 'g', pct: vs.protein && vs.protein.mealPercent },
+      { k: '脂肪', v: t.fat, u: 'g', pct: vs.fat && vs.fat.mealPercent },
+      { k: '碳水', v: t.carb, u: 'g', pct: vs.carb && vs.carb.mealPercent },
+      { k: '钠', v: t.sodium, u: 'mg', pct: vs.sodium && vs.sodium.mealPercent, warnAt: 100 },
+    ];
+    $('nutriGrid').innerHTML = boxes.map(function (b) {
+      var warn = b.warnAt && b.pct && b.pct > b.warnAt;
+      var pct = typeof b.pct === 'number' ? '单餐 ' + Math.round(b.pct) + '%' : '';
+      return '<div class="nutri-box' + (warn ? ' warn' : '') + '">'
+        + '<div class="k">' + b.k + '</div>'
+        + '<div class="v">' + (b.v != null ? b.v : '—') + '<span style="font-size:10px"> ' + b.u + '</span></div>'
+        + '<div class="p">' + pct + '</div></div>';
+    }).join('');
+
+    // 价格
+    if (d.price) {
+      var p = d.price;
+      var html = '<span class="pv">¥' + Number(p.payable).toFixed(2) + '</span>';
+      if (p.discount > 0) {
+        html += '<span class="pd">已优惠 ¥' + Number(p.discount).toFixed(2) + '</span>';
+      }
+      if (p.original != null && p.discount > 0) {
+        html += '<span class="po">原价 ¥' + Number(p.original).toFixed(2) + '</span>';
+      }
+      html += '<span class="po">· ' + (p.estimated
+        ? escapeHtml(p.note || '组合价不可用，为单件合计')
+        : '三个餐品合并试算（服务端自动匹配组合优惠）') + '</span>';
+      if (p.estimated && d.priceError) {
+        html += '<div class="po" style="margin-top:4px">组合下单被拒：' + escapeHtml(d.priceError) + '</div>';
+      }
+      html += renderPriceLines(p);
+      $('priceBox').innerHTML = html;
+    } else {
+      var msg = '<span class="po">价格试算失败：' + escapeHtml(d.priceError || '未返回金额') + '</span>';
+      // 逐件降级结果：明确指出哪一件买不了
+      if (d.perItem && d.perItem.length) {
+        var lines = d.perItem.map(function (x) {
+          if (x.price && x.price.payable != null) {
+            return '<div class="po">· ' + escapeHtml(x.name) + ' —— ¥' + Number(x.price.payable).toFixed(2) + '</div>';
+          }
+          return '<div class="po" style="color:#ff9d9d">· ' + escapeHtml(x.name) + ' —— 不可售（'
+            + escapeHtml(x.error || '门店暂不可售') + '）</div>';
+        }).join('');
+        msg += '<div style="margin-top:6px">' + lines + '</div>';
+      }
+      $('priceBox').innerHTML = msg;
+    }
+
+    // 1+1 随心配：滚轮只摇单品，但两件单品可能正好拼成套餐价
+    $('priceBox').innerHTML += renderCombo(d.combo);
+
+    // 健康提示
+    $('notes').innerHTML = (d.notes || []).map(function (n) {
+      var text = typeof n === 'string' ? n : n.text;
+      var level = typeof n === 'string' ? 'info' : (n.level || 'info');
+      return '<div class="note ' + escapeAttr(level) + '">' + escapeHtml(text) + '</div>';
+    }).join('');
+
+    // 下单按钮与本单优惠绑定
+    updateOrderButton(d);
+  }
+
+  /**
+   * 1+1 随心配面板。
+   *
+   * 与「套餐不进滚轮」并不矛盾：营养仍按摇出的单品算（套餐拆不出可信营养），
+   * 但价格按更便宜的套餐价算——这正是用户想要的「摇中就能按折扣下单」。
+   */
+  function renderCombo(c) {
+    if (!c) return '';
+    if (c.available) {
+      var parts = (c.slots || []).map(function (s) {
+        return escapeHtml(s.roundName + '·' + s.name);
+      }).join(' + ');
+      var price = '¥' + Number(c.payable).toFixed(2);
+      var saving = c.saving
+        ? '（单点 ¥' + Number(c.listTotal).toFixed(2)
+          + '，省 <b>¥' + Number(c.saving).toFixed(2) + '</b>'
+          + (c.discountLabel ? '，相当于 <b>' + escapeHtml(c.discountLabel) + '</b>' : '')
+          + '）'
+        : '';
+      return '<div class="combo-hit">'
+        + '<div class="ch-head">🍟 摇中 1+1 · ' + escapeHtml(c.name) + '</div>'
+        + '<div class="ch-body">' + parts + ' → <b>' + price + '</b>' + saving + '</div>'
+        + '</div>';
+    }
+    if (c.reason === 'no_combo') {
+      return '<div class="combo-miss">1+1 随心配：本时段没有供应（按餐段上架，早餐时段通常看不到）</div>';
+    }
+    return '<div class="combo-miss">1+1 随心配：' + escapeHtml(c.note || '这单拼不成') + '</div>';
+  }
+
+  /**
+   * 渲染「每件单价 + 每件折扣」明细。
+   *
+   * 服务端已在 productList 里把组合优惠分摊到行项目，因此这里的折扣是
+   * 每件商品真实的到手折扣，而不是整单折扣的简单均分。
+   */
+  function renderPriceLines(p) {
+    var lines = p.lines || [];
+    if (!lines.length) return '';
+
+    var rows = lines.map(function (l) {
+      var unit = l.unitPayable != null ? Number(l.unitPayable).toFixed(2) : '—';
+      var unitText = l.quantity > 1
+        ? ('¥' + unit + ' × ' + l.quantity)
+        : ('¥' + unit);
+      var orig = (l.unitOriginal != null && l.discountLabel)
+        ? '<span class="pl-orig">¥' + Number(l.unitOriginal).toFixed(2) + '</span>'
+        : '';
+      var off = l.discountLabel
+        ? '<span class="pl-off">' + escapeHtml(l.discountLabel) + '</span>'
+        : '<span class="pl-off none">无折扣</span>';
+      var saved = (l.saved != null && l.saved > 0)
+        ? '<span class="pl-saved">省 ¥' + Number(l.saved).toFixed(2) + '</span>'
+        : '<span class="pl-saved"></span>';
+      return '<div class="price-line">'
+        + '<span class="pl-name">' + escapeHtml(l.name) + '</span>'
+        + '<span class="pl-unit">' + orig + ' ' + unitText + '</span>'
+        + off
+        + saved
+        + '</div>';
+    }).join('');
+
+    var head = '<div class="price-lines">' + rows;
+    if (p.overallDiscountLabel) {
+      head += '<div class="price-summary-off">整单相当于 <b>' + escapeHtml(p.overallDiscountLabel) + '</b>'
+        + (p.discount > 0 ? '，优惠合计 <b>¥' + Number(p.discount).toFixed(2) + '</b>' : '')
+        + '</div>';
+    }
+    return head + '</div>';
+  }
+
+  // ---------------------------------------------------------------- 初始化
+  function renderCredits() { $('credits').textContent = state.credits; }
+  function saveCredits() {
+    try { localStorage.setItem(STORE_KEY, String(state.credits)); } catch (_) { /* 隐私模式下忽略 */ }
+  }
+  function loadCredits() {
+    try {
+      var v = parseInt(localStorage.getItem(STORE_KEY), 10);
+      if (!isNaN(v) && v >= 0) state.credits = v;
+    } catch (_) { /* 忽略 */ }
+  }
+
+  function buildMarquee() {
+    var m = $('marquee');
+    var html = '';
+    for (var i = 0; i < 24; i++) html += '<span class="bulb"></span>';
+    m.innerHTML = html;
+    var bulbs = m.querySelectorAll('.bulb');
+    var idx = 0;
+    setInterval(function () {
+      for (var i = 0; i < bulbs.length; i++) bulbs[i].classList.remove('on');
+      for (var k = 0; k < 4; k++) {
+        if (bulbs[(idx + k * 6) % bulbs.length]) bulbs[(idx + k * 6) % bulbs.length].classList.add('on');
+      }
+      idx = (idx + 1) % bulbs.length;
+    }, 110);
+  }
+
+  function showNotice(title, text, actions) {
+    $('noticeTitle').textContent = title;
+    $('noticeText').textContent = text;
+    $('noticeActions').innerHTML = '';
+    (actions || []).forEach(function (a) { $('noticeActions').appendChild(a); });
+    $('notice').classList.remove('hidden');
+    $('machine').classList.add('hidden');
+  }
+
+  function initMachine() {
+    $('notice').classList.add('hidden');
+    $('machine').classList.remove('hidden');
+    buildStrips();
+    buildMarquee();
+    renderCredits();
+
+    if (window.innerWidth <= 560) state.cellHeight = 116;
+  }
+
+  // ---------------------------------------------------------------- 门店选择弹窗
+  function openStoreModal() {
+    var body = $('storeModalBody');
+    body.innerHTML = '';
+    body.appendChild(buildStorePicker());
+    $('storeModal').classList.remove('hidden');
+    var inp = body.querySelector('.store-input');
+    if (inp) inp.focus();
+  }
+
+  function closeStoreModal() {
+    $('storeModal').classList.add('hidden');
+  }
+
+  /**
+   * 门店选择器（关键词搜索 + 门店按钮列表），首次进入与「换门店」共用。
+   *
+   * 关于「为什么每次只返回 5 家」：query-nearby-stores 只有 beType / searchType /
+   * city / keyword 四个参数，没有任何分页或条数参数，服务端固定按距离返回最近的 5 家。
+   * 与其假装能翻页，不如让多次搜索的结果在界面上累积去重——搜「松江」得 5 家，
+   * 再搜「徐家汇」又追加 5 家，候选集就能逐步扩大。
+   *
+   * 接口实测约束（这部分决定了 UI 形态）：
+   *   1. searchType=2 时 city 与 keyword 都是必填，缺任一个返回 code 600058；
+   *   2. city 必须是服务端认可的城市名 / 区名，把「杭州三里亭餐厅」这种整句
+   *      塞进去会静默返回 0 家——这也是之前部分门店死活搜不出来的原因；
+   *   3. 无分页参数，每次固定按距离返回最近的 5 家。
+   * 因此这里把「城市」和「地标」拆成两个输入框，服务端也按候选组依次重试。
+   */
+  function buildStorePicker() {
+    var found = [];      // 累积结果，按 storeCode 去重
+    var seen = {};
+
+    var cityInput = document.createElement('input');
+    cityInput.className = 'store-input';
+    cityInput.placeholder = '城市，如 杭州';
+    cityInput.style.width = '110px';
+
+    var input = document.createElement('input');
+    input.className = 'store-input';
+    input.placeholder = '地标 / 门店名，如 三里亭';
+
+    var btn = document.createElement('button');
+    btn.className = 'mini-btn';
+    btn.textContent = '搜索门店';
+
+    var list = document.createElement('div');
+    list.className = 'store-results';
+
+    var tip = document.createElement('div');
+    tip.className = 'store-tip';
+
+    function pick(s) {
+      list.textContent = '加载菜单中…';
+      fetch('/api/store/select', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // 服务端只认编号，但界面要显示中文名，因此一并回传
+        body: JSON.stringify({
+          storeCode: s.storeCode,
+          beCode: s.beCode,
+          storeName: s.name,
+          storeAddress: s.address,
+          businessStatus: s.businessStatus,
+          businessStartTime: s.businessStartTime,
+          businessEndTime: s.businessEndTime,
+        }),
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          // 打烊门店菜单为空，此时刷新页面只会看到「菜单为空」，不如把真实原因留在弹窗里
+          if (!res.ok) { render('无法选择这家门店：' + (res.error || '未知原因')); return; }
+          location.reload();
+        })
+        .catch(function (err) { render('选择失败：' + err.message); });
+    }
+
+    function render(extra) {
+      list.innerHTML = '';
+      if (!found.length) {
+        list.textContent = extra || '';
+        tip.textContent = '城市与地标分开填，命中率高得多。接口无分页参数，每次返回距离最近的 5 家。';
+        return;
+      }
+      found.forEach(function (s) {
+        var b = document.createElement('button');
+        b.className = 'mini-btn';
+        b.style.margin = '4px';
+        var status = s.businessStatus === true ? ' · 营业中'
+          : s.businessStatus === false ? ' · 已打烊' + (s.businessStartTime ? '(' + s.businessStartTime + '-' + s.businessEndTime + ')' : '')
+          : '';
+        b.textContent = s.name + (s.distance ? ' · ' + s.distance + 'm' : '') + status;
+        b.addEventListener('click', function () { pick(s); });
+        list.appendChild(b);
+      });
+      tip.textContent = '已找到 ' + found.length + ' 家'
+        + (extra ? ' · ' + extra : '')
+        + ' · 换个地标还能继续加';
+    }
+
+    function search() {
+      var kw = input.value.trim();
+      var city = cityInput.value.trim();
+      if (!kw && !city) { render('请填写城市或地标'); return; }
+      render('搜索中…');
+      fetch('/api/stores', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ city: city, keyword: kw }),
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (r) {
+          if (!r.ok || !r.stores || !r.stores.length) {
+            render('未找到门店：' + (r.error || '换更具体的地名试试'));
+            return;
+          }
+          var added = 0;
+          r.stores.forEach(function (s) {
+            var key = String(s.storeCode || s.id || s.name);
+            if (seen[key]) return;
+            seen[key] = true;
+            added++;
+            found.push(s);
+          });
+          render(added ? '本次新增 ' + added + ' 家' : '这些门店已在列表中');
+        })
+        .catch(function (err) { render('搜索失败：' + err.message); });
+    }
+
+    btn.addEventListener('click', search);
+    [cityInput, input].forEach(function (el) {
+      el.addEventListener('keydown', function (e) { if (e.key === 'Enter') search(); });
+    });
+
+    var row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.flexWrap = 'wrap';
+    row.style.gap = '6px';
+    row.style.justifyContent = 'center';
+    // 地标框自适应剩余宽度，窄屏靠 flexWrap 自动换行，避免挤出弹窗
+    input.style.flex = '1 1 150px';
+    input.style.minWidth = '0';
+    row.appendChild(cityInput);
+    row.appendChild(input);
+    row.appendChild(btn);
+
+    var box = document.createElement('div');
+    box.appendChild(row);
+    box.appendChild(list);
+    box.appendChild(tip);
+    render('');
+    return box;
+  }
+
+  // ---------------------------------------------------------------- Token 面板
+  function setTokenStatus(text, ok) {
+    var el = $('tokenStatus');
+    el.textContent = text;
+    el.className = 'token-status' + (ok === false ? ' off' : '');
+  }
+
+  /**
+   * 查询真实连接状态。
+   *
+   * 早期实现在拿到符号接口结果前就显示「已连接 MCP」，页面刚打开时会闪一个
+   * 未经确认的状态。改为先显式查 /api/health，再用真实结果刷新。
+   */
+  function refreshStatus() {
+    setTokenStatus('检查连接…', true);
+    return fetch('/api/health')
+      .then(function (r) { return r.json(); })
+      .then(function (h) {
+        setTokenStatus(
+          h.connected ? ('已连接 · ' + h.toolCount + ' 个工具') : '未连接 MCP',
+          h.connected
+        );
+        return h;
+      })
+      .catch(function () { setTokenStatus('无法连接本地服务', false); });
+  }
+
+  function openTokenPanel(show) {
+    $('tokenPanel').classList.toggle('hidden', !show);
+    if (show) $('tokenInput').focus();
+  }
+
+  function bindToken() {
+    $('tokenBtn').addEventListener('click', function () {
+      openTokenPanel($('tokenPanel').classList.contains('hidden'));
+    });
+    $('tokenCancel').addEventListener('click', function () { openTokenPanel(false); });
+    $('tokenInput').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') $('tokenSubmit').click();
+    });
+    $('tokenSubmit').addEventListener('click', function () {
+      var token = $('tokenInput').value.trim();
+      if (!token) { setTokenStatus('请先粘贴 Token', false); return; }
+      var btn = this;
+      btn.disabled = true;
+      setTokenStatus('连接中…', true);
+      fetch('/api/mcp/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: token }),
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          btn.disabled = false;
+          if (!d.ok) {
+            setTokenStatus('连接失败：' + (d.error || '未知错误'), false);
+            return;
+          }
+          $('tokenInput').value = '';
+          openTokenPanel(false);
+          setTokenStatus('已连接 · ' + d.toolCount + ' 个工具', true);
+          // 连上之后重新走一遍引导：没门店就会落到门店选择
+          loadSymbols();
+        })
+        .catch(function (err) {
+          btn.disabled = false;
+          setTokenStatus('连接失败：' + err.message, false);
+        });
+    });
+  }
+
+  // ---------------------------------------------------------------- 一键下单（占位）
+  /**
+   * 按钮可用性与「本单是否有优惠」绑定。
+   *
+   * 一键下单目前只是占位，若始终可点，用户点下去发现什么也没发生会更困惑。
+   * 无优惠（或价格都没试算出来）时直接置灰，并在下方说明原因。
+   */
+  function updateOrderButton(d) {
+    var btn = $('orderBtn');
+    var note = $('orderNote');
+    var p = d && d.price;
+    var discount = p && Number(p.discount) > 0 ? Number(p.discount) : 0;
+    var c = d && d.combo && d.combo.available ? d.combo : null;
+
+    // 能拼 1+1 也算「有折扣」——用户要的就是这种单
+    btn.disabled = !discount && !c;
+    if (c) {
+      var saveText = c.saving ? '，省 ¥' + Number(c.saving).toFixed(2) : '';
+      note.textContent = '可拼 ' + c.name + '：¥' + Number(c.payable).toFixed(2) + saveText + ' · 下单功能规划中';
+    } else if (discount) {
+      note.textContent = '本单可享 ¥' + discount.toFixed(2) + ' 优惠 · 下单功能规划中';
+    } else if (!d) {
+      note.textContent = '先摇出带优惠的组合，才谈得上下单';
+    } else if (!p) {
+      note.textContent = '价格试算失败，暂时无法下单';
+    } else if (p.estimated) {
+      note.textContent = '当前为单件价格合计，无组合优惠 · 暂不可下单';
+    } else {
+      note.textContent = '这一餐没有可用优惠 · 一键下单暂不可用';
+    }
+  }
+
+  function bindOrder() {
+    $('orderBtn').addEventListener('click', function () {
+      var note = $('orderNote');
+      var base = note.textContent;
+      note.textContent = '下单功能还在规划中 · 需要先把地址、取餐方式与支付回调打通，避免误触产生真实订单';
+      note.classList.add('flash');
+      beep(330, 0.1, 'square', 0.05);
+      setTimeout(function () { beep(262, 0.14, 'square', 0.05); }, 110);
+      setTimeout(function () {
+        note.classList.remove('flash');
+        note.textContent = base;
+      }, 3200);
+    });
+  }
+
+  // ---------------------------------------------------------------- 引导
+  /** 拉取符号并决定展示老虎机还是引导面板 */
+  function loadSymbols() {
+    $('notice').classList.add('hidden');
+    fetch('/api/slot/symbols')
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) {
+          var msg = d.error || '未知错误';
+
+          // 分支判定以服务端给的标志位为准。早期实现靠错误文案里是否含「门店」二字，
+          // 而真实文案是「工具 query-meals 需要补充参数：storeCode」，于是换门店后
+          // 被误判成「MCP 未就绪」并把用户弹出本页——这是「换门店点了没反应」的根因。
+          if (d.needToken) {
+            setTokenStatus('未连接 MCP', false);
+            openTokenPanel(true);
+            showNotice('请先连接 MCP', msg + ' · 在上方填入 Token 即可，不必去别的页面。', []);
+            return;
+          }
+          if (d.needStore) {
+            // 连接状态由 refreshStatus 负责，这里只负责引导选门店
+            var pick = document.createElement('button');
+            pick.className = 'mini-btn';
+            pick.textContent = '选择门店';
+            pick.addEventListener('click', openStoreModal);
+            showNotice('选择门店', '老虎机从门店在售菜单取真实餐品图片，先选一家门店。', [pick]);
+            openStoreModal();
+            return;
+          }
+          // 其他情况：保留文案并给一个重试入口，而不是把人弹去配置页
+          var retry = document.createElement('button');
+          retry.className = 'mini-btn';
+          retry.textContent = '重试';
+          retry.addEventListener('click', loadSymbols);
+          showNotice('加载失败', msg, [retry]);
+          return;
+        }
+
+        openTokenPanel(false);
+        state.symbols = d.symbols;
+        // 优先显示中文门店名，缺失时退回编号（例如通过调试台直接指定门店的场景）
+        var si = d.storeInfo || {};
+        $('storeTag').textContent = si.name
+          ? ('门店 ' + si.name)
+          : (d.store ? ('门店 ' + d.store) : '');
+        initMachine();
+      })
+      .catch(function (err) {
+        showNotice('加载失败', err.message, []);
+      });
+  }
+
+  function boot() {
+    loadCredits();
+    buildMarquee();
+    bindToken();
+    bindOrder();
+
+    $('spinBtn').addEventListener('click', doSpin);
+
+    // 声音总开关：同时管音效与背景音乐。
+    // 背景音乐一旦启动就持续运行，静音只把 master gain 拉到 0，
+    // 这样「关→开」是瞬间恢复，不需要重新排一遍小节。
+    $('soundBtn').addEventListener('click', function () {
+      state.muted = !state.muted;
+      this.textContent = '声音: ' + (state.muted ? '关' : '开');
+      bgmApplyMute();
+    });
+
+    // 「换门店」改为弹窗：选错可以直接关掉，不会丢失当前这一局
+    $('reloadBtn').addEventListener('click', openStoreModal);
+    $('storeModalClose').addEventListener('click', closeStoreModal);
+    $('storeModal').addEventListener('click', function (e) {
+      if (e.target === $('storeModal')) closeStoreModal();
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') closeStoreModal();
+    });
+
+    // 浏览器要求先有用户交互才允许播放音频，因此首次点击时再启动背景音乐
+    var kickBgm = function () {
+      document.removeEventListener('click', kickBgm);
+      document.removeEventListener('keydown', kickBgm);
+      bgmStart();
+    };
+    document.addEventListener('click', kickBgm);
+    document.addEventListener('keydown', kickBgm);
+
+    // 先查真实连接状态，再拉符号，避免页面刚打开就闪一个未确认的「已连接」
+    refreshStatus();
+
+    loadSymbols();
+  }
+
+  // ---------------------------------------------------------------- 工具
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function escapeAttr(s) { return escapeHtml(s); }
+
+  boot();
+})();
+</script>
+</body>
+</html>
