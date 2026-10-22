@@ -392,6 +392,9 @@ async function main() {
       case 'order': return await cmdOrder(flags, positional);
       case undefined:
       case 'help':
+      case '-h':
+      case '-help':
+        // --help 会被 parseArgs 吃成 flag，cmd 就是 undefined，落到这里也一样
         console.log(fs.readFileSync(path.join(__dirname, '..', 'references', 'cli-usage.txt'), 'utf8'));
         return 0;
       default:

@@ -76,10 +76,10 @@ curl -X POST http://127.0.0.1:8787/api/store/select \
 | 6 | `query-my-coupons` | — | ⭕ 已实现加载器，当前版本未接入主流程 |
 | 7 | `query-store-coupons` | `orderType`, `beType`, `storeCode` | ⭕ 已实现加载器，当前版本未接入主流程 |
 | 8 | `available-coupons` | — | ⭕ 已实现加载器，当前版本未接入主流程 |
-| 9 | `create-order` | `storeCode`, `orderType`, `beType` | ❌ 有意不调用（产生真实支付链接） |
-| 10 | `query-order` | `orderId` | ⭕ 可调用（未接入主流程） |
+| 9 | `create-order` | `storeCode`, `orderType`, `beType`, `takeWayCode`, `items` | ✅ 一键下单（双重人工确认后才调用） |
+| 10 | `query-order` | `orderId` | ✅ 付款状态轮询 |
 | 11 | `order-list` | — | ⭕ 可调用（未接入主流程） |
-| 12 | `cancel-order` | `orderId`, `cancelReasonCode` | ⭕ 可调用（未接入主流程） |
+| 12 | `cancel-order` | `orderId`, `cancelReasonCode` | ✅ 显式取消订单 |
 | 13 | `query-my-account` | — | ⭕ 可调用（未接入主流程） |
 | 14 | `query-lottery-info` | — | ⭕ 只读查询过，未抽奖 |
 | 15 | `draw-lottery` | — | ❌ 有意不调用（原子扣减且不可撤销） |
@@ -106,7 +106,7 @@ curl -X POST http://127.0.0.1:8787/api/store/select \
 
 > ⭕ 表示未进入当前版本的主流程；其中 `POST /api/mcp/call` 可透传调用全部 35 个工具，用于排障与试参数。
 >
-> 当前版本实际进入主流程的是 5 个工具：`list-nutrition-foods`、`query-nearby-stores`、`query-meals`、`query-meal-detail`、`calculate-price`。优惠券不参与计算——两件及以上的组合优惠由 `calculate-price` 服务端自动给出，无需传券码。
+> 当前版本实际进入主流程的是 8 个工具：`list-nutrition-foods`、`query-nearby-stores`、`query-meals`、`query-meal-detail`、`calculate-price`（读链路），以及 `create-order`、`query-order`、`cancel-order`（写链路，必须经过人工确认，见第 11 节）。优惠券不参与计算——两件及以上的组合优惠由 `calculate-price` 服务端自动给出，无需传券码。
 
 ---
 
@@ -407,13 +407,26 @@ curl -s -X POST https://mcp.mcd.cn \
 
 ## 9. 安全边界
 
-以下工具本项目**有意不调用**：
+写操作按「有没有能力撤销」分成两类，边界不一样：
+
+**有条件调用**（一次性、可关单、金额可见）：
+
+| 工具 | 前置条件 | 兜底 |
+|---|---|---|
+| `create-order` | 用户先在弹窗看见金额与门店、选堂食/外带、勾选确认语，服务端再复核一次金额才建单 | 15 分钟未付款自动关单；页面提供「取消订单」，也可在麦当劳 APP「我的订单」里处理 |
+| `query-order` | 只读 | — |
+| `cancel-order` | 用户显式点「取消订单」或支付超时 | 重复取消回 `600064`，按已取消处理 |
+
+**永不调用**：
 
 | 工具 | 原因 |
 |---|---|
-| `create-order` / `mall-create-order` / `party-order-create` | 产生真实支付链接，必须保留人工确认 |
-| `draw-lottery` | 服务端原子扣减积分/次数且**不可撤销**，官方明确要求展示消耗后取得明确确认才能调用 |
+| `mall-create-order` / `party-order-create` | 商城与团餐下单链路未经实测，不拿用户账号冒险 |
+| `draw-lottery` | 服务端原子扣减积分/次数且**不可撤销**，官方明确要求展示消耗后取得明确确认才能调用；本项目零奖励诉求，没必要动它 |
 | `delivery-create-address` | 涉及收货地址与手机号等隐私信息 |
+| `auto-bind-coupons` | 会变更账号券状态，且计价已由服务端自动选最优，无需此步 |
+
+> `create-order` 之所以从「永不调用」移进「有条件调用」，是因为本项目把它做成了**等待人工付款**的半程链路：MCP 只负责把购物车变成待支付订单，付款永远由人在手机上完成（第 11 节）。没有这层确认 UI，它就仍然属于不该碰的工具。
 
 Token 仅在服务进程内存中保存，不写入磁盘；`.gitignore` 已排除所有可能含凭证的调试产物。
 
@@ -476,3 +489,57 @@ calculate-price（取 takeWayList / 金额）
 | 每日上限 | 同一账号当天建到第 4 单被拒：`今日下单数已经上限` | 原样把错误文案回给用户，不重试 |
 
 三条安全约定：订单只可能建在**填了 Token 的那个人**的账号里；演示模式（快照）下 `/api/order/create` 直接 `403`，按钮文案固定为「演示模式无法下单」；关弹窗不取消订单（用户可能正在扫码），只有显式点取消或超时才关单。
+
+---
+
+## 12. 把 MCP 能力交给对话：WorkBuddy 技能形态
+
+同一个 MCP 集成，本项目给了两种消费方式：**人打开网页玩**，和**对话里说一句话**。后者打包成 WorkBuddy 技能 `mcshake-slot`（随仓库放在 `skills/mcshake-slot/`）。
+
+### 12.1 为什么不直连 MCP
+
+最省事的做法是让技能自己拿 Token、自己调 `calculate-price`。没有这么做，因为**玩法逻辑只有一份**：符号精选、概率表开奖、营养匹配、1+1 分区索引、折扣分摊、下单入参翻译，全在 `src/` 与 `server.js` 里。技能里重写一遍，必然和网页版跑偏——同一个组合，浏览器算 ¥37.40、对话里算出别的数，这种不一致比功能缺失更难解释，也最容易在演示时被抓出来。
+
+所以技能只做编排，不碰业务：
+
+```text
+对话 / CLI
+   │  ① 定位仓库（MCSHAKE_HOME → config.json → 向上查找 → 扫 ~/WorkBuddy/*/McShake）
+   ▼
+skills/mcshake-slot/scripts/mcshake.js
+   │  ② 起一个临时本地服务（端口 8787 起试 6 个，已跑着的 McShake 则直接复用）
+   ▼
+server.js  ←── 与网页版完全同一份代码
+   │  ③ 打 /api/slot/*、/api/order/*
+   ▼
+麦当劳官方 MCP（https://mcp.mcd.cn）
+```
+
+技能里 `require` 的也是仓库自己的 `src/slot.js` 概率表，**不另写随机逻辑**：否则对话里摇的和网页上摇的分布不一样。
+
+### 12.2 为什么是「一条命令一个临时服务」
+
+第一版做的是常驻后台服务，结果在实际执行环境里被连进程树回收——`serve` 报成功，下一条命令却找不到服务，还留一个指向死端口的状态文件，制造假故障。改成默认自灭：**起服务 → 办完事 → 关掉**（演示模式约 1.7s / 局，实时模式约 5s / 局）。只有用户想看浏览器时才 `serve`。
+
+另一个必须处理的竞态：端口通了不等于能用。`server.js` 在 `listen` 回调里才去连 MCP 或载入快照，此时打 `/api/slot/symbols` 会拿到「尚未连接 MCP 服务」。所以就绪判定是 `health.demo || health.connected`，不是 `health.ok`。
+
+### 12.3 对话场景的三条硬边界
+
+| 边界 | 做法 | 为什么 |
+|---|---|---|
+| 建单必须显式确认 | `order create` 不带 `--yes` 直接退出码 `2`，只打印金额与门店 | 模型很容易在「帮我点个麦当劳」之后顺手建单。这一条写进了 `test.js` 断言 |
+| Token 不进输出 | 只从环境变量读，`--json` 输出里不含 Token，也不落盘 | 对话记录会被保存和转发，凭据进了 transcript 就等于泄漏 |
+| 不宣称已完成付款 | 输出里固定写「待支付 + 付款链接 + 15 分钟窗口」 | MCP 没有支付能力，说「已帮你付好」是把人骗到店里干等 |
+
+### 12.4 两种安装方式
+
+| 方式 | 位置 | 定位仓库的方式 |
+|---|---|---|
+| 跟着仓库 | `skills/mcshake-slot/` | 自动向上查找，无需配置 |
+| 装成用户级技能 | `~/.workbuddy/skills/mcshake-slot/` | 环境变量 `MCSHAKE_HOME`，或技能目录写 `config.json`：`{"home":"<仓库绝对路径>"}` |
+
+`config.json` 含本机绝对路径，已列入 `.gitignore`，不入库。
+
+### 12.5 验证
+
+技能自身的可用性有 11 项断言（`test.js` 的 [11] 组）：项目定位（`looksLikeProject` / `resolveProjectRoot`）、开奖判定（三连/两连/全不同）、无参数与 `-h` 都打印用法、`order create` 缺 `--yes` 时拒绝执行且退出码为 `2`。全部测试合计 **212 项**，不需要 Token。

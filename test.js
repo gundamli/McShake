@@ -707,6 +707,15 @@ console.log('\n[11] 技能（skills/mcshake-slot）：能自检、能跑、不�
   }
   check('无参数运行打印用法并正常退出', help.includes('spin') && help.includes('order preview'), help.slice(0, 80));
 
+  // -h 是最自然的求助动作，不该回一句「未知命令」
+  let shortHelp = '';
+  try {
+    shortHelp = execFileSync(process.execPath, [entry, '-h'], { encoding: 'utf8', timeout: 20000 });
+  } catch (err) {
+    shortHelp = '';
+  }
+  check('-h 同样打印用法', shortHelp.includes('spin') && shortHelp.includes('order preview'), shortHelp.slice(0, 80));
+
   // 建单保护：没有 --yes 不能真下单（这条只验证退出码，不触网）
   let code = 0;
   try {

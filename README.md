@@ -2,7 +2,7 @@
 
 > 2026 麦当劳程序员创意开发大赛参赛作品 · 全程使用 **WorkBuddy** 开发
 >
-> [![Node](https://img.shields.io/badge/Node-22%2B-3c873a)](https://nodejs.org) [![Dependencies](https://img.shields.io/badge/dependencies-0-blue)](#安装方法) [![Tests](https://img.shields.io/badge/tests-211%20passed-success)](test.js) [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+> [![Node](https://img.shields.io/badge/Node-22%2B-3c873a)](https://nodejs.org) [![Dependencies](https://img.shields.io/badge/dependencies-0-blue)](#安装方法) [![Tests](https://img.shields.io/badge/tests-212%20passed-success)](test.js) [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 摇一摇老虎机，摇出你这一餐的营养账本和最省买法。
 
@@ -200,6 +200,8 @@ node skills/mcshake-slot/scripts/mcshake.js order create --take-way eat-in --yes
 - **`order create` 不带 `--yes` 一律不建单**：建单会在账号里留一笔真实待支付订单，必须先把金额和门店讲清楚再下。
 - 装到 `~/.workbuddy/skills/` 使用时，用环境变量 `MCSHAKE_HOME` 或技能目录下的 `config.json` 指回仓库路径。
 
+技能的触发条件、命令清单、安装步骤与设计取舍见 [`skills/README.md`](skills/README.md)；为什么技能不直连 MCP 而是套一层本地 HTTP，见 [`MCP_INTEGRATION.md` 第 12 节](MCP_INTEGRATION.md)。
+
 ## 工作原理
 
 ### 1. 营养匹配阈值 0.55
@@ -276,8 +278,9 @@ https://m.mcd.cn/mcp/scanToPay?orderId=1030783210000795859126729765
 ├── scripts/
 │   └── build-demo-snapshot.js  # 重新抓取快照（约 20 秒）
 ├── skills/
+│   ├── README.md            # 技能索引、安装方式、设计取舍
 │   └── mcshake-slot/        # WorkBuddy 技能：在对话框里摇一局、算账、建单
-├── test.js                  # 核心算法自测（184 项，无需 Token）
+├── test.js                  # 核心算法自测（185 项，无需 Token）
 ├── test-integration.js      # 协议层集成测试（27 项，内置模拟 MCP 服务）
 ├── docs/
 │   ├── demo-spin.gif        # 操作演示：SPIN → 停位 → 营养与计价 → 命中 1+1
@@ -314,11 +317,11 @@ https://m.mcd.cn/mcp/scanToPay?orderId=1030783210000795859126729765
 ## 测试
 
 ```bash
-node test.js              # 184 项，核心算法（无需 Token、不联网）
+node test.js              # 185 项，核心算法（无需 Token、不联网）
 node test-integration.js  # 27 项，协议层（内置模拟 MCP 服务）
 ```
 
-共 211 项断言，覆盖符号精选、概率支付表、开奖画面一致性（5000 次循环）、营养匹配与 NRV、计价归一化与折扣分摊、1+1 分区索引与拼单匹配、门店参数拆分、SSE/JSON 双格式握手、会话保持、401/429、限流、官方表格格式解析、混合文本 JSON 提取、演示快照的自洽性（三连命中快照原样返回、套餐价 = 基础价 + 差价、未知餐品不给假价格）、一键下单的参数翻译（取餐方式白名单、套餐 + 剩余单品入参、分/元单位换算、UTC+8 支付截止时间、订单回包收敛），以及技能自身的可用性（项目定位、开奖判定、建单必须带 `--yes`）。
+共 212 项断言，覆盖符号精选、概率支付表、开奖画面一致性（5000 次循环）、营养匹配与 NRV、计价归一化与折扣分摊、1+1 分区索引与拼单匹配、门店参数拆分、SSE/JSON 双格式握手、会话保持、401/429、限流、官方表格格式解析、混合文本 JSON 提取、演示快照的自洽性（三连命中快照原样返回、套餐价 = 基础价 + 差价、未知餐品不给假价格）、一键下单的参数翻译（取餐方式白名单、套餐 + 剩余单品入参、分/元单位换算、UTC+8 支付截止时间、订单回包收敛），以及技能自身的可用性（项目定位、开奖判定、`-h` 与无参数都打印用法、建单必须带 `--yes`）。
 
 ## 边界与合规
 
