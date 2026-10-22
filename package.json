@@ -1,0 +1,23 @@
+{
+  "name": "mcshake",
+  "version": "1.0.0",
+  "private": true,
+  "description": "麦摇摇 McShake · 麦当劳营养账本与凑单优化器（2026 麦当劳程序员创意开发大赛参赛作品）",
+  "license": "MIT",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js && node test-integration.js",
+    "skill": "node skills/mcshake-slot/scripts/mcshake.js spin"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcdonalds",
+    "mcp",
+    "nutrition",
+    "slot-machine",
+    "workbuddy"
+  ]
+}

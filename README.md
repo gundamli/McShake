@@ -117,14 +117,16 @@ MCD_MCP_TOKEN=xxx node scripts/build-demo-snapshot.js
 
 ## 安装方法
 
-**环境要求**：Node.js 22 或更高。**无需 `npm install`**——项目零第三方依赖。
+**环境要求**：Node.js 18 或更高（用到了全局 `fetch`），开发与测试在 Node 22 上进行。**无需 `npm install`**——项目零第三方依赖。
 
 ```bash
 git clone https://github.com/gundamli/McShake.git
 cd McShake
-node server.js
+npm start                 # 等价于 node server.js，也可以直接 node server.js
 # 打开 http://127.0.0.1:8787
 ```
+
+另外两个脚本：`npm test` 跑全部 212 项测试（无需 Token），`npm run skill` 直接在终端摇一局。
 
 可选：用环境变量直接带上 Token 启动，省去页面里手动填写。
 
@@ -262,6 +264,7 @@ https://m.mcd.cn/mcp/scanToPay?orderId=1030783210000795859126729765
 
 ```text
 .
+├── package.json             # npm start / test / run skill（零依赖，只有脚本声明）
 ├── server.js                # 零依赖 HTTP 服务：路由 + MCP 会话 + 菜单/开奖/计价编排
 ├── public/
 │   ├── slot.html            # 单页前端：像素风老虎机、门店弹窗、结果面板、8bit BGM
