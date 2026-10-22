@@ -337,14 +337,21 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* 无图时的占位。别用米白底：套餐专属子件会长期停留在这个状态，
+     一块白贴纸钉在深色滚轮里非常突兀。改成深底 + 虚线边，
+     一眼能看出「这里没有照片」，但不会跳出画面。 */
   .cell .fallback {
     width: 88px; height: 84px;
     display: flex; align-items: center; justify-content: center;
-    background: var(--paper);
-    color: var(--mcd-red);
-    font-size: 13px;
+    background: #20243f;
+    color: #ffd45e;
+    font-size: 12px;
     font-weight: 700;
-    border: 2px solid var(--mcd-red-dark);
+    line-height: 1.1;
+    letter-spacing: 1px;
+    text-align: center;
+    padding: 4px;
+    border: 2px dashed #565d8c;
   }
 
   /* 中奖线 */
@@ -1055,10 +1062,12 @@
 
   function cellHtml(s, size) {
     var src = s.image || s.remoteImage;
+    // 占位字：名字里有括号就取括号前（「那么大鸡排（椒盐风味）」→「那么大鸡排」）
+    var shortName = String(s.name || '').split(/[（(]/)[0].slice(0, 4);
     var img = src
       ? '<img src="' + escapeAttr(src) + '" alt="' + escapeAttr(s.name) + '" loading="eager" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
-        + '<div class="fallback" style="display:none">' + escapeHtml(s.name.slice(0, 3)) + '</div>'
-      : '<div class="fallback">' + escapeHtml(s.name.slice(0, 3)) + '</div>';
+        + '<div class="fallback" style="display:none">' + escapeHtml(shortName) + '</div>'
+      : '<div class="fallback">' + escapeHtml(shortName) + '</div>';
     return '<div class="cell">' + img + '<div class="cname">' + escapeHtml(s.name) + '</div></div>';
   }
 
@@ -1990,9 +1999,14 @@
   function renderOrderError(msg) {
     $('orderModalBody').innerHTML = '<p class="modal-desc" style="color:#ff9d9d">'
       + escapeHtml(msg) + '</p>'
-      + '<button class="ow-btn" id="orderRetryBtn">重试</button>';
+      + '<button class="ow-btn" id="orderRetryBtn">重试</button>'
+      + '<button class="ow-link" id="orderErrorClose">先不下了，关掉</button>';
     var btn = $('orderRetryBtn');
     if (btn) btn.addEventListener('click', openOrderModal);
+    // 有些错误重试也没用（比如这一局根本没拼成 1+1），得给条退路，
+    // 否则弹窗只剩一个「重试」，点一次错一次。
+    var close = $('orderErrorClose');
+    if (close) close.addEventListener('click', function () { $('orderModalClose').click(); });
   }
 
   // -------------------------------------------------- 第二步：建单 + 二维码

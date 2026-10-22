@@ -665,7 +665,11 @@ async function evaluateCombo(items, cartPrice) {
       const data = await session.mcp.callTool('calculate-price', args);
       const p = normalizePriceResult(data);
       if (!p || p.failed || p.payable == null) continue;
-      priced.push({ deal, price: p });
+      priced.push({
+        deal,
+        price: p,
+        takeWayList: order.normalizeTakeWay((data && data.data ? data.data : data || {}).takeWayList),
+      });
     } catch (_) { /* 换下一个候选 */ }
   }
 
@@ -696,6 +700,8 @@ async function evaluateCombo(items, cartPrice) {
   }
 
   let totalPayable = best.price.payable;
+  // 取餐方式从「整单」那次试算里取最准（含剩余单品）；拿不到再退回套餐那次
+  let takeWayList = best.takeWayList || [];
   if (extras.length) {
     try {
       const args = buildPriceArgs({
@@ -707,6 +713,8 @@ async function evaluateCombo(items, cartPrice) {
       const data = await session.mcp.callTool('calculate-price', args);
       const p = normalizePriceResult(data);
       totalPayable = p && !p.failed && p.payable != null ? p.payable : null;
+      const tw = order.normalizeTakeWay((data && data.data ? data.data : data || {}).takeWayList);
+      if (tw.length) takeWayList = tw;
     } catch (_) { totalPayable = null; }
   }
 
@@ -756,6 +764,7 @@ async function evaluateCombo(items, cartPrice) {
     })),
     // 下单用：把套餐子件结构一并带出去，避免前端再算一遍（也避免前端伪造）
     roundList: best.deal.roundList,
+    takeWayList,
     note: hasSaving
       ? (extras.length
         ? `其中两件能拼「${best.deal.comboName}」（¥${best.price.payable.toFixed(2)}），加上${extraNames}本单实付 ¥${totalPayable.toFixed(2)}，比单点省 ¥${saving.toFixed(2)}`
@@ -782,14 +791,53 @@ async function prepareOrder(codes) {
     throw Object.assign(new Error('还没选门店，先选一家门店'), { status: 400 });
   }
 
-  const items = [];
-  for (const code of Array.isArray(codes) ? codes : []) {
-    const meal = session.menu.find((x) => String(x.code) === String(code));
-    if (!meal) throw Object.assign(new Error(`「${code}」不在当前门店菜单里，菜单可能已更新`), { status: 400 });
-    items.push({ code: String(meal.code), name: meal.name });
+  // 1. 解析餐品：菜单优先；查不到再查套餐子件表。
+  //
+  //    1+1 的两个分区里混着一批「套餐专属子件」（例如迷你草莓新地 4420）——
+  //    它们不出现在 query-meals 返回的门店菜单里，但完全合法，只是必须以套餐的形式买。
+  //    以前只查菜单，于是「我要 1+1」锁出来的组合必然卡在这里下不了单，
+  //    等于把最好用的那条路径堵死了。
+  let choice = new Map();
+  try {
+    await ensureComboIndex();
+    choice = choiceMap();
+  } catch (_) { /* 没有随心配不影响普通单品 */ }
+
+  const resolved = order.resolveOrderItems(codes, session.menu, choice);
+  if (resolved.unknown.length) {
+    throw Object.assign(
+      new Error(`「${resolved.unknown[0]}」不在当前门店菜单里，菜单可能已更新`), { status: 400 });
   }
+  const items = resolved.items;
   if (!items.length) throw Object.assign(new Error('没有可下单的餐品'), { status: 400 });
 
+  // 2. 含套餐专属子件：不能走单品试算。
+  //    它没有独立售价（单点必失败），只有拼进套餐才成立，所以先判能不能拼；
+  //    拼不成就是真的买不了，如实说，不要退回一个假金额。
+  if (items.some((i) => i.comboOnly)) {
+    const comboDeal = await evaluateCombo(items, null);
+    if (!comboDeal.available) {
+      const names = items.filter((i) => i.comboOnly).map((i) => i.name).join('、');
+      throw Object.assign(new Error(
+        `${names} 只能跟着套装一起买，这单没拼成 1+1（需要在两个分区各摇到一件）`), { status: 400 });
+    }
+    const hasExtras = (comboDeal.extraItems || []).length > 0;
+    if (hasExtras && comboDeal.totalPayable == null) {
+      throw Object.assign(new Error('金额没复核完整（套餐之外的餐品没算进总额），先别下单'), { status: 400 });
+    }
+    const payable = comboDeal.totalPayable != null ? comboDeal.totalPayable : comboDeal.payable;
+    return {
+      items,
+      // 没有「单点合计」可报：套餐子件不存在独立的原价
+      price: { payable, original: null, discount: null },
+      combo: comboDeal,
+      takeWayList: comboDeal.takeWayList || [],
+      orderItems: order.buildOrderItems(items, comboDeal),
+      payable,
+    };
+  }
+
+  // 3. 常规路径：整单单品试算 → 判 1+1
   const args = buildPriceArgs({ items: items.map((i) => ({ code: i.code, quantity: 1 })) }, null);
   const data = await session.mcp.callTool('calculate-price', args);
   const price = normalizePriceResult(data);

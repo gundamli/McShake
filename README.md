@@ -2,7 +2,7 @@
 
 > 2026 麦当劳程序员创意开发大赛参赛作品 · 全程使用 **WorkBuddy** 开发
 >
-> [![Node](https://img.shields.io/badge/Node-22%2B-3c873a)](https://nodejs.org) [![Dependencies](https://img.shields.io/badge/dependencies-0-blue)](#安装方法) [![Tests](https://img.shields.io/badge/tests-227%20passed-success)](test.js) [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+> [![Node](https://img.shields.io/badge/Node-22%2B-3c873a)](https://nodejs.org) [![Dependencies](https://img.shields.io/badge/dependencies-0-blue)](#安装方法) [![Tests](https://img.shields.io/badge/tests-237%20passed-success)](test.js) [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 摇一摇老虎机，摇出你这一餐的营养账本和最省买法。
 
@@ -128,7 +128,7 @@ npm start                 # 等价于 node server.js，也可以直接 node serv
 # 打开 http://127.0.0.1:8787
 ```
 
-另外两个脚本：`npm test` 跑全部 227 项测试（无需 Token），`npm run skill` 直接在终端摇一局。
+另外两个脚本：`npm test` 跑全部 237 项测试（无需 Token），`npm run skill` 直接在终端摇一局。
 
 可选：用环境变量直接带上 Token 启动，省去页面里手动填写。
 
@@ -254,6 +254,8 @@ node skills/mcshake-slot/scripts/mcshake.js order create --take-way eat-in --yes
 
 还有两个数据上的坑：一部分「套餐专属子件」**不在门店菜单里**（如「可乐中杯」），只有套餐分区里才有它们的记录。处理办法是给它们补一次 `query-meal-detail` 拿官方图（拿不到就由前端降级成文字，绝不拿别的餐品的图顶替），名称则用套餐 choices 里的真名——否则结果面板会把它们显示成一串数字、营养全空。同时它们的价值已经计入套餐价，**不该再被逐件价格表标成「不可售」**，否则用户会以为这单买不了。
 
+下单路径上这一点更要紧：这类子件不在 `query-meals` 的返回里，若只按菜单校验，点「一键下单」会被判「不在当前门店菜单里」直接拒单——而锁定 1+1 之后摇出来的组合里几乎必然有它们。所以下单前的解析是「菜单优先、套餐子件兜底」，并且**只要含子件就必须先拼套餐**（子件没有独立售价，单品试算必失败），拼不成则如实说明「只能跟着套装一起买」。
+
 ```text
 query-meal-detail（套餐 rounds[]）
   → pickComboPlan        选定一套：分区最全、组合最多
@@ -308,7 +310,7 @@ https://m.mcd.cn/mcp/scanToPay?orderId=1030783210000795859126729765
 ├── skills/
 │   ├── README.md            # 技能索引、安装方式、设计取舍
 │   └── mcshake-slot/        # WorkBuddy 技能：在对话框里摇一局、算账、建单
-├── test.js                  # 核心算法自测（200 项，无需 Token）
+├── test.js                  # 核心算法自测（210 项，无需 Token）
 ├── test-integration.js      # 协议层集成测试（27 项，内置模拟 MCP 服务）
 ├── docs/
 │   ├── demo-spin.gif        # 操作演示：SPIN → 停位 → 营养与计价 → 命中 1+1
@@ -345,11 +347,11 @@ https://m.mcd.cn/mcp/scanToPay?orderId=1030783210000795859126729765
 ## 测试
 
 ```bash
-node test.js              # 200 项，核心算法（无需 Token、不联网）
+node test.js              # 210 项，核心算法（无需 Token、不联网）
 node test-integration.js  # 27 项，协议层（内置模拟 MCP 服务）
 ```
 
-共 227 项断言，覆盖符号精选、概率支付表、开奖画面一致性（5000 次循环）、营养匹配与 NRV、计价归一化与折扣分摊、1+1 分区索引与拼单匹配、门店参数拆分、SSE/JSON 双格式握手、会话保持、401/429、限流、官方表格格式解析、混合文本 JSON 提取、演示快照的自洽性（三连命中快照原样返回、套餐价 = 基础价 + 差价、未知餐品不给假价格）、一键下单的参数翻译（取餐方式白名单、套餐 + 剩余单品入参、分/元单位换算、UTC+8 支付截止时间、订单回包收敛），技能自身的可用性（项目定位、开奖判定、`-h` 与无参数都打印用法、建单必须带 `--yes`），以及「我要 1+1」的分区锁定（选套餐规则、跨套餐拼不成、A 区 × B 区全量 120 种组合必中、不锁时的自然命中率显著更低）。
+共 237 项断言，覆盖符号精选、概率支付表、开奖画面一致性（5000 次循环）、营养匹配与 NRV、计价归一化与折扣分摊、1+1 分区索引与拼单匹配、门店参数拆分、SSE/JSON 双格式握手、会话保持、401/429、限流、官方表格格式解析、混合文本 JSON 提取、演示快照的自洽性（三连命中快照原样返回、套餐价 = 基础价 + 差价、未知餐品不给假价格）、一键下单的参数翻译（取餐方式白名单、套餐 + 剩余单品入参、分/元单位换算、UTC+8 支付截止时间、订单回包收敛），技能自身的可用性（项目定位、开奖判定、`-h` 与无参数都打印用法、建单必须带 `--yes`），以及「我要 1+1」的分区锁定（选套餐规则、跨套餐拼不成、A 区 × B 区全量 120 种组合必中、不锁时的自然命中率显著更低），以及下单前的餐品解析（套餐专属子件不能被当成「不在菜单」拒掉）。
 
 ## 边界与合规
 

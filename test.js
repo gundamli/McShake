@@ -5,6 +5,7 @@
 const nutrition = require('./src/nutrition');
 const optimizer = require('./src/optimizer');
 const combo = require('./src/combo');
+const order = require('./src/order');
 
 let pass = 0;
 let fail = 0;
@@ -816,6 +817,45 @@ console.log('\n[12] 「我要 1+1」锁定分区：选套餐、annotations、跨
     check('兜底表里能取到套餐专属子件的真名',
       Array.from(cm.values()).every((v) => v.name && v.name !== v.code), '存在名称=编码的条目');
   }
+}
+
+// ---------------------------------------------------------------- [13] 下单前的餐品解析
+//
+// 这条曾经是真的 bug：锁了 1+1 摇出来的两件里，粉区常年是「迷你草莓新地」这类
+// 套餐专属子件——它不在门店菜单里，于是点一键下单直接被判「不在当前门店菜单里」。
+// 开关做得再对，一单也下不了。
+console.log('\n[13] 下单前的餐品解析：套餐专属子件不该被拒');
+{
+  const snap = require('./demo/demo-snapshot.json');
+  const idx = combo.buildComboIndex(snap.combos || []);
+  const cm = combo.buildChoiceMap(idx.combos);
+  const menu = snap.menu || [];
+  const inMenu = String(menu[0].code);
+  const comboOnly = Array.from(cm.keys()).find((c) => !menu.some((m) => String(m.code) === c));
+  const menuOnly = menu.map((m) => String(m.code)).find((c) => !cm.has(c));
+
+  const r1 = order.resolveOrderItems([inMenu], menu, cm);
+  check('菜单内的餐品标为非套餐专属', r1.items.length === 1 && r1.items[0].comboOnly === false,
+    JSON.stringify(r1.items));
+  check('菜单内的餐品用菜单名', !!r1.items[0] && r1.items[0].name === menu[0].name);
+
+  check('快照里确实存在套餐专属子件（前置条件）', !!comboOnly, '没有则这条测试无意义');
+  const r2 = order.resolveOrderItems([comboOnly, menuOnly], menu, cm);
+  check('套餐专属子件被接受而不是报错', r2.items.length === 2 && r2.unknown.length === 0,
+    JSON.stringify(r2));
+  check('套餐专属子件标为 comboOnly', r2.items[0].comboOnly === true, JSON.stringify(r2.items[0]));
+  check('套餐专属子件的名字来自套餐 choices 而非编码',
+    r2.items[0].name && r2.items[0].name !== comboOnly,
+    `${comboOnly} → ${r2.items[0].name}`);
+  check('混在一起时菜单内的那件仍按普通单品处理', r2.items[1].comboOnly === false);
+
+  const r3 = order.resolveOrderItems(['999999', menuOnly], menu, cm);
+  check('真不存在的编码仍然报 unknown', r3.unknown.length === 1 && r3.unknown[0] === '999999',
+    JSON.stringify(r3.unknown));
+  check('unknown 不会混进 items', r3.items.length === 1, String(r3.items.length));
+
+  const r4 = order.resolveOrderItems([], menu, cm);
+  check('空入参返回空列表而不是抛错', r4.items.length === 0 && r4.unknown.length === 0);
 }
 
 console.log(`\n结果：${pass} 通过，${fail} 失败\n`);

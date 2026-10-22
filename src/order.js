@@ -83,6 +83,36 @@ function buildOrderItems(items, comboDeal) {
   return out;
 }
 
+/**
+ * 把前端传来的 code 解析成下单用的 item。
+ *
+ * 菜单优先；查不到再查套餐子件表——「1+1」两个分区里混着一批套餐专属子件
+ * （例如迷你草莓新地 4420），它们不在 query-meals 的门店菜单里，却完全合法，
+ * 只是必须以套餐的形式买。只查菜单的话，锁了分区反而一单也下不了。
+ *
+ * @param {string[]} codes
+ * @param {Array<{code:string,name:string}>} menu 门店菜单
+ * @param {Map<string,{name:string,roundName?:string}>} choiceMap 套餐子件表
+ * @returns {{items:Array, unknown:string[]}}
+ */
+function resolveOrderItems(codes, menu, choiceMap) {
+  const byCode = new Map((Array.isArray(menu) ? menu : []).map((m) => [String(m.code), m]));
+  const items = [];
+  const unknown = [];
+  for (const raw of Array.isArray(codes) ? codes : []) {
+    const code = String(raw);
+    const meal = byCode.get(code);
+    if (meal) { items.push({ code, name: meal.name, comboOnly: false }); continue; }
+    const ch = choiceMap && typeof choiceMap.get === 'function' ? choiceMap.get(code) : null;
+    if (ch) {
+      items.push({ code, name: ch.name, comboOnly: true, roundName: ch.roundName || '' });
+      continue;
+    }
+    unknown.push(code);
+  }
+  return { items, unknown };
+}
+
 /** 金额：create-order 给的是元的字符串，统一转成数字元 */
 function toYuan(v) {
   if (v == null || v === '') return null;
@@ -161,6 +191,7 @@ function normalizeOrder(data) {
 module.exports = {
   normalizeTakeWay,
   pickTakeWay,
+  resolveOrderItems,
   buildOrderItems,
   toYuan,
   parseExpireAt,
