@@ -726,6 +726,98 @@ console.log('\n[11] 技能（skills/mcshake-slot）：能自检、能跑、不�
   check('order create 缺 --yes 时拒绝执行（退出码 2）', code === 2 || code === 3, `exit=${code}`);
 }
 
+console.log('\n[12] 「我要 1+1」锁定分区：选套餐、annotations、跨区必中');
+{
+  const fsx = require('fs');
+  const pathx = require('path');
+
+  const fake = (code, name, roundNames, sizes) => ({
+    code,
+    name,
+    rounds: roundNames.map((rn, i) => ({
+      id: String(i + 1),
+      name: rn,
+      quantity: 1,
+      choices: Array.from({ length: sizes[i] }, (_, k) => ({
+        code: `${code}-${i + 1}-${k}`,
+        name: `${rn}${k}`,
+        diffPrice: '+ ¥0',
+      })),
+    })),
+  });
+
+  // 两套套餐都能用时，选组合数多的那套；两边件数相同则取编码靠前的，保证结果稳定
+  const planA = combo.pickComboPlan([
+    fake('990001', '人气经典随心配', ['蓝区', '粉区'], [8, 15]),
+    fake('990002', '精选超值随心配', ['蓝区', '粉区'], [8, 3]),
+  ]);
+  check('挑可摇组合最多的那套套餐', planA.available && planA.comboCode === '990001', planA.comboCode);
+  check('只输出两个分区', planA.rounds.length === 2, String(planA.rounds.length));
+  check('pairCount 由前端自己算（此处不参与）', planA.rounds.every((r) => r.choices.length > 0), '有空分区');
+
+  const planStable = combo.pickComboPlan([
+    fake('990009', 'z套餐', ['蓝区', '粉区'], [4, 4]),
+    fake('990003', 'a套餐', ['蓝区', '粉区'], [4, 4]),
+  ]);
+  check('组合数相同时按套餐编码稳定排序', planStable.comboCode === '990003', planStable.comboCode);
+
+  check('没有随心配时为 no_combo', combo.pickComboPlan([]).reason === 'no_combo');
+  check('只有一个分区时识别为 too_few',
+    combo.pickComboPlan([fake('x', '单区套餐', ['蓝区'], [5])]).reason === 'too_few');
+  check('两个分区都为空时不算可用',
+    combo.pickComboPlan([fake('x', '空套餐', ['蓝区', '粉区'], [0, 3])]).available === false);
+
+  // 跨套餐拼不成——这正是「第 1、2 行必须来自同一套套餐」的原因
+  const idx = combo.buildComboIndex([
+    fake('C1', '一号套餐', ['A区', 'B区'], [3, 3]),
+    fake('C2', '二号套餐', ['A区', 'B区'], [3, 3]),
+  ]);
+  check('跨套餐的两件拼不出 1+1', combo.findDeals(['C1-1-0', 'C2-2-0'], idx).length === 0);
+  check('同套餐跨分区的两件能拼出 1+1', combo.findDeals(['C1-1-0', 'C1-2-0'], idx).length === 1);
+  check('同套餐同分区的两件拼不出 1+1', combo.findDeals(['C1-1-0', 'C1-1-1'], idx).length === 0);
+
+  // 真实快照：A 区任意一件 + B 区任意一件，必须 100% 命中
+  const snapPath = pathx.join(__dirname, 'demo', 'demo-snapshot.json');
+  if (fsx.existsSync(snapPath)) {
+    const snap = JSON.parse(fsx.readFileSync(snapPath, 'utf8'));
+    const realIdx = combo.buildComboIndex(snap.combos || []);
+    const plan = combo.pickComboPlan(realIdx.combos);
+    check('真实快照里能选出一套可用的随心配', plan.available && plan.rounds.length === 2, String(plan.reason));
+
+    if (plan.available) {
+      const [RA, RB] = plan.rounds;
+      let ok = 0;
+      let n = 0;
+      for (const a of RA.choices) {
+        for (const b of RB.choices) {
+          n++;
+          if (combo.findDeals([a.code, b.code], realIdx).length) ok++;
+        }
+      }
+      check(`A 区 × B 区共 ${n} 种组合全部能拼成 1+1`, ok === n && n > 0, `${ok}/${n}`);
+
+      // 参照组：不锁分区的自然命中率应该明显更低，否则这个开关没有价值
+      const symbols = (snap.symbols || []).map((s) => String(s.code));
+      let free = 0, total = 0;
+      for (let i = 0; i < symbols.length; i++) {
+        for (let j = i + 1; j < symbols.length; j++) {
+          total++;
+          if (combo.findDeals([symbols[i], symbols[j]], realIdx).length) free++;
+        }
+      }
+      check('不锁分区时自然命中率显著更低（这才是开关的意义）', free < total * 0.5,
+        `命中 ${free}/${total}`);
+    }
+
+    const cm = combo.buildChoiceMap(realIdx.combos);
+    check('子件兜底表覆盖了所有分区选项',
+      realIdx.combos.every((c) => c.rounds.every((r) => r.choices.every((ch) => cm.has(String(ch.code))))),
+      String(cm.size));
+    check('兜底表里能取到套餐专属子件的真名',
+      Array.from(cm.values()).every((v) => v.name && v.name !== v.code), '存在名称=编码的条目');
+  }
+}
+
 console.log(`\n结果：${pass} 通过，${fail} 失败\n`);
 process.exit(fail === 0 ? 0 : 1);
 })();

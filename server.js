@@ -56,6 +56,9 @@ const session = {
   /** 1+1 随心配索引：{ combos, slotMap }，按门店缓存 */
   comboIndex: null,
   comboStore: null,
+  /** 锁定 1+1 用的分区候选项目（第一二行各摇一个区），同按门店缓存 */
+  comboPlan: null,
+  comboReels: null,
   templates: loadTemplates(),
   lastError: null,
   /** 演示模式：无 Token 时用 demo/demo-snapshot.json 快照重放真实数据 */
@@ -394,7 +397,233 @@ async function ensureComboIndex({ force = false } = {}) {
 
   session.comboIndex = combo.buildComboIndex(details);
   session.comboStore = storeKey;
+  session.comboPlan = null;   // 换店/重抓后分区候选要跟着重算
+  session.comboReels = null;
   return session.comboIndex;
+}
+
+/**
+ * 给「套餐专属子件」补图片，返回补到几张。
+ *
+ * 这些子件（如「可乐中杯」）不在门店菜单里，于是没有 CDN 地址可用。
+ * 补一次 query-meal-detail 通常能拿到官方图；拿不到就保持无图，由前端降级成文字。
+ *
+ * 两条防线：
+ *   1. **必须校验回包里的 code**。callToolSmart 优先使用用户保存的参数模板，
+ *      而模板里没有我们这次要查的 code——不校验就会给「可乐」贴上「汉堡」的图。
+ *      配错图比缺图更糟，宁可显示三个字。
+ *   2. 限量 12 件、并发 4：换一次店只跑一次，结果缓存在 session.comboReels 里。
+ */
+async function fillMissingImages(rounds) {
+  const codes = [];
+  const seen = new Set();
+  for (const r of rounds) {
+    for (const s of r.symbols) {
+      if (s.image || seen.has(s.code)) continue;
+      seen.add(s.code);
+      codes.push(String(s.code));
+    }
+  }
+  const targets = codes.slice(0, 12);
+  if (!targets.length) return 0;
+
+  const found = new Map();
+  const CONC = 4;
+  for (let i = 0; i < targets.length; i += CONC) {
+    const batch = targets.slice(i, i + CONC);
+    await Promise.all(batch.map(async (code) => {
+      try {
+        const d = await callToolSmart('query-meal-detail', { code, ...reservationArg() });
+        if (!d || d.needInput) return;
+        const detail = (d.data && d.data.data) ? d.data.data : d.data;
+        if (!detail || String(detail.code) !== String(code)) return;
+        const img = detail.image || detail.picUrl || detail.imgUrl;
+        if (img) found.set(code, String(img));
+      } catch (_) { /* 单件失败不影响其余 */ }
+    }));
+  }
+
+  let n = 0;
+  for (const r of rounds) {
+    r.symbols = r.symbols.map((s) => {
+      const img = found.get(String(s.code));
+      if (!img || s.image) return s;
+      n++;
+      return { ...s, image: img };
+    });
+  }
+  return n;
+}
+
+/**
+ * 「我要 1+1」要用的分区候选：把某一套随心配的两个分区转成老虎机能摇的符号。
+ *
+ * 服务端的取舍有三条：
+ *   1. 只取**同一套**套餐的两个分区。跨套餐拼不出套餐价（findDeals 要求同 comboCode）。
+ *   2. 名称与图片优先从菜单取，取不到就用套餐 choices 里的名称——部分子件是套餐专属，
+ *      不在门店菜单里（如「可乐中杯」），这时图片缺失、由前端降级成文字。
+ *   3. 营养仍然走同一套名称匹配。给到 1+1 专属子件也得给出热量，不然那一格是空的。
+ *
+ * @param {{ haveImages?: boolean }} [options] haveImages=false 时跳过图片下载（仅做结构校验用）
+ */
+async function ensureComboReels({ downloadImages = true } = {}) {
+  const storeKey = String(session.storeContext.storeCode || session.storeContext.storeId || '');
+  if (session.comboReels && session.comboStore === storeKey) return session.comboReels;
+
+  const index = await ensureComboIndex();
+  const plan = combo.pickComboPlan(index.combos);
+  session.comboPlan = plan;
+
+  if (!plan.available) {
+    session.comboReels = {
+      available: false,
+      reason: plan.reason,
+      comboCode: null,
+      comboName: null,
+      rounds: [],
+      pairCount: 0,
+    };
+    return session.comboReels;
+  }
+
+  const menuByCode = new Map(session.menu.map((m) => [String(m.code), m]));
+  const ACCENT = ['#3D7BE8', '#E86FA0'];  // 第一分区偏蓝、第二分区偏粉，与官方分区色一致
+
+  let rounds = plan.rounds.map((r, ri) => ({
+    id: r.id,
+    name: r.name,
+    symbols: r.choices.map((c) => {
+      const m = menuByCode.get(c.code);
+      return {
+        id: c.code,
+        code: c.code,
+        name: c.name || (m && m.name) || String(c.code),
+        image: (m && m.image) || null,
+        category: 'combo',
+        categoryLabel: r.name,
+        accent: ACCENT[ri] || '#7F8C8D',
+        rare: false,
+        isCombo: false,
+        diffPrice: c.diffPrice,
+        weight: 14,
+        ...nutritionFor({ code: c.code, name: c.name, hasRounds: false, isCombo: false }),
+      };
+    }),
+  }));
+
+  // 可售性预检：套餐 choices 里混着当下买不到的餐品（抓快照时就遇到 4 件回
+  // 60006「已售罄或不可售」，全是粉区饮品）。让用户摇到买不了的组合等于骗人，
+  // 所以入池前先剔掉——只剔**确认不可售**的，查不明的留下来，宁可多给一件选择。
+  let dropped = [];
+  try {
+    const availability = await verifyAvailability(rounds.reduce((a, r) => a.concat(r.symbols), []));
+    const gone = (code) => {
+      const a = availability[String(code)];
+      return a && a.available === false ? a.reason : null;
+    };
+    const before = rounds.reduce((n, r) => n + r.symbols.length, 0);
+    rounds = rounds.map((r) => ({
+      ...r,
+      symbols: r.symbols.filter((s) => {
+        const why = gone(s.code);
+        if (why) dropped.push({ code: s.code, name: s.name, reason: why, round: r.name });
+        return !why;
+      }),
+    }));
+    if (dropped.length) {
+      console.log(`  [1+1] 剔除 ${dropped.length}/${before} 件当前不可售的子件：${dropped.map((d) => d.name).join('、')}`);
+    }
+  } catch (_) { /* 预检失败就照原样给，宁多勿少 */ }
+
+  // 一侧被剔空就没法保证「必定凑出」，此时宁可把开关关掉并说明原因
+  if (!rounds[0].symbols.length || !rounds[1].symbols.length) {
+    session.comboReels = {
+      available: false,
+      reason: 'all_unavailable',
+      comboCode: plan.comboCode,
+      comboName: plan.comboName,
+      rounds: [],
+      pairCount: 0,
+      dropped,
+      note: '这套随心配里没有当下买得到的餐品组合，换个时段或门店再试',
+    };
+    return session.comboReels;
+  }
+
+  // 套餐专属子件缺图时先补一轮，再统一做图片本地化
+  if (downloadImages) {
+    await fillMissingImages(rounds);
+    for (const r of rounds) {
+      const withImg = r.symbols.filter((s) => s.image);
+      // 只对有图的走本地化；缺失的再去 fetch(null) 只是白失败一次
+      const localized = withImg.length ? await localizeImages(withImg) : [];
+      const byCode = new Map(localized.map((s) => [String(s.code), s]));
+      r.symbols = r.symbols.map((s) => byCode.get(String(s.code)) || s);
+    }
+  }
+
+  const missingImage = rounds.reduce(
+    (n, r) => n + r.symbols.filter((s) => !s.image).length, 0
+  );
+
+  if (downloadImages) {
+    for (const r of rounds) {
+      const withImg = r.symbols.filter((s) => s.image);
+      // 只对有图的走本地化；缺失的再去 fetch(null) 只是白失败一次
+      const localized = withImg.length ? await localizeImages(withImg) : [];
+      const byCode = new Map(localized.map((s) => [String(s.code), s]));
+      r.symbols = r.symbols.map((s) => byCode.get(String(s.code)) || s);
+    }
+  }
+
+  session.comboReels = {
+    available: true,
+    reason: null,
+    comboCode: plan.comboCode,
+    comboName: plan.comboName,
+    rounds,
+    dropped,
+    missingImage,
+    pairCount: rounds.reduce((n, r) => n * Math.max(0, r.symbols.length), 1),
+  };
+  return session.comboReels;
+}
+
+/**
+ * 子件兜底表：套餐专属子件不在菜单里，用它补名称与营养。
+ * 见 combo.buildChoiceMap 的注释。
+ */
+function choiceMap() {
+  return combo.buildChoiceMap((session.comboIndex && session.comboIndex.combos) || []);
+}
+
+/**
+ * 菜单里找不到这件商品时的兜底项。
+ *
+ * 命中 1+1 子件表：给真名，并按**同一套名称匹配**算营养——它们的规格与普通单品一致，
+ * 营养库里查得到（「双层吉士汉堡」就有）。查不到仍然留空并给提示，不外推。
+ * 没命中就保持原来的「菜单中未找到该餐品」，不把一串数字当名字糊过去。
+ */
+function fallbackItem(code, choice) {
+  if (!choice) {
+    return { code, name: code, image: null, isCombo: false, nutrition: null, nutritionNote: '菜单中未找到该餐品' };
+  }
+  const n = nutritionFor({ code, name: choice.name, hasRounds: false, isCombo: false });
+  return {
+    code,
+    name: choice.name,
+    image: null,
+    remoteImage: null,
+    isCombo: false,
+    nutrition: n.nutrition,
+    nutritionNote: n.nutritionNote || null,
+    matchedName: n.matchedName || null,
+    fromCombo: {
+      comboCode: choice.comboCode,
+      comboName: choice.comboName,
+      roundName: choice.roundName,
+    },
+  };
 }
 
 /**
@@ -662,6 +891,8 @@ async function handleApi(req, res, url) {
         session.menu = [];
         session.library = new nutrition.NutritionLibrary();
         session.comboIndex = null;
+        session.comboPlan = null;
+        session.comboReels = null;
         session.comboStore = null;
         session.slotAvailability = null;
       }
@@ -837,6 +1068,8 @@ async function handleApi(req, res, url) {
     session.menu = [];
     session.coupons = [];
     session.comboIndex = null;
+    session.comboPlan = null;
+    session.comboReels = null;
     session.comboStore = null;
     session.slotAvailability = null;
     try {
@@ -877,6 +1110,8 @@ async function handleApi(req, res, url) {
     session.coupons = [];
     session.slotAvailability = null;
     session.comboIndex = null;
+    session.comboPlan = null;
+    session.comboReels = null;
     session.comboStore = null;
     return sendJson(res, 200, { ok: true });
   }
@@ -949,12 +1184,21 @@ async function handleApi(req, res, url) {
         combo1plus1 = { size: idx.size, names: idx.combos.map((c) => c.name) };
       } catch (_) { /* 不影响开奖 */ }
 
+      // 「我要 1+1」开关的分区候选：拿到就随 symbols 一起给前端，省一次往返
+      let comboReels = null;
+      try {
+        comboReels = await ensureComboReels();
+      } catch (err) {
+        comboReels = { available: false, reason: 'failed', comboName: null, rounds: [], pairCount: 0, error: err.message };
+      }
+
       return sendJson(res, 200, {
         ok: true,
         symbols: enriched,
         librarySize: session.library.size,
         menuSize: session.menu.length,
         combo1plus1,
+        comboReels,
         // store 保留编号字符串以兼容旧前端，新增 storeInfo 带中文名与地址
         store: session.storeContext.storeCode || null,
         storeInfo: {
@@ -978,10 +1222,20 @@ async function handleApi(req, res, url) {
     if (!session.mcp) return sendJson(res, 200, { ok: false, error: '尚未连接 MCP 服务' });
 
     try {
-      // 以菜单为准还原餐品信息，避免前端伪造名称
+      // 以菜单为准还原餐品信息，避免前端伪造名称。
+      // 兜底：1+1 分区里有些是**套餐专属子件**（不在门店菜单里），名称取自套餐 choices，
+      // 否则它们会被显示成一串数字、营养全空。
+      //
+      // 索引必须**先拉取**：choiceMap 读的是 session.comboIndex，而这个接口也可以不经过
+      // /api/slot/symbols 直接被调用（技能CLI、重新扫码开场等情况），此时索引还是空的，
+      // 兜底表自然也是空的——名称就会退化成编码数字。所以这里不能省这一次 ensure。
+      try {
+        await ensureComboIndex();
+      } catch (_) { /* 拿不到就退化为原来的提示，不整单失败 */ }
+      const choiceFallback = choiceMap();
       const items = codes.map((code) => {
         const m = session.menu.find((x) => String(x.code) === String(code));
-        if (!m) return { code: String(code), name: String(code), image: null, isCombo: false, nutrition: null, nutritionNote: '菜单中未找到该餐品' };
+        if (!m) return fallbackItem(String(code), choiceFallback.get(String(code)));
         const n = nutritionFor(m);
         const rel = localPathFor(m);
         const cached = fs.existsSync(path.join(SLOT_IMG_DIR, path.basename(rel)));

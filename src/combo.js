@@ -165,6 +165,96 @@ function findDeals(codes, index) {
 }
 
 /**
+ * 从多套随心配里挑出「能玩的那一套」，并给出两个分区各自的可选子件。
+ *
+ * 为什么必须限定在**同一套**套餐里：
+ *   1+1 的成立条件是「两件同属一个套餐、且落在不同分区」（见 findDeals）。
+ *   把「人气经典」的蓝区和「精选超值」的粉区凑在一起是拼不成套餐价的——
+ *   这也是为什么这里不以「所有套餐的 choices 取并集」来摇第一二行。
+ *
+ * 选哪一套：两个分区都要有货，且**两侧件数的乘积最大**（可摇出的组合最多）。
+ * 只有一套时自然是它；没有任何可用套餐时返回 available:false 由前端给出负状态。
+ *
+ * @param {Array<{code:string,name:string,rounds:Array}>} details query-meal-detail 的结果
+ * @param {{ minChoices?: number }} [options] minChoices 低于此数量视为「凑不出玩法」
+ * @returns {Object}
+ */
+function pickComboPlan(details, { minChoices = 1 } = {}) {
+  const empty = {
+    available: false, reason: 'no_combo', comboCode: null, comboName: null, rounds: [],
+  };
+
+  const plans = [];
+  for (const d of Array.isArray(details) ? details : []) {
+    if (!d || d.code == null) continue;
+    const rounds = normalizeRounds(d.rounds);
+    // 两分区套餐才谈得上「1+1」；三分区以上的组合套餐不走这条链路
+    const pair = rounds.slice(0, 2);
+    if (pair.length < 2) continue;
+    if (pair.some((r) => r.choices.length < minChoices)) continue;
+
+    plans.push({
+      available: true,
+      reason: null,
+      comboCode: String(d.code),
+      comboName: String(d.name || d.code),
+      rounds: pair.map((r) => ({
+        id: r.id,
+        name: r.name,
+        choices: r.choices.map((c) => ({ code: c.code, name: c.name, diffPrice: c.diffPrice })),
+      })),
+    });
+  }
+
+  if (!plans.length) {
+    // 有套餐但区块数量不够，与「压根没有随心配」提示不同
+    const hadAny = Array.isArray(details) && details.some((d) => d && normalizeRounds(d.rounds).length);
+    return Object.assign({}, empty, { reason: hadAny ? 'too_few' : 'no_combo' });
+  }
+
+  plans.sort((a, b) => {
+    const size = (p) => p.rounds.reduce((n, r) => n * Math.max(0, r.choices.length), 1);
+    const diff = size(b) - size(a);
+    if (diff !== 0) return diff;
+    // 组合数相同时按套餐编码稳定排序，避免同一门店每次开出不同套餐
+    return String(a.comboCode).localeCompare(String(b.comboCode));
+  });
+  return plans[0];
+}
+
+/**
+ * 建立「子件 code → 名称 / 所属套餐 / 所属分区」的兜底表。
+ *
+ * 用途：1+1 分区里有一部分是**套餐专属子件**（例如 `3050 可乐中杯`），
+ * 它们不在门店菜单里。`/api/slot/result` 原本以菜单还原餐品信息，这类 code
+ * 会被显示成一串数字、营养全空。用这张表兜底后，名称取自套餐 choices，
+ * 营养仍走同一套名称匹配。
+ *
+ * @param {Array} combos buildComboIndex 产出的 combos
+ * @returns {Map<string, {code,name,comboCode,comboName,round,roundName}>}
+ */
+function buildChoiceMap(combos) {
+  const map = new Map();
+  for (const c of Array.isArray(combos) ? combos : []) {
+    for (const r of c.rounds || []) {
+      for (const ch of r.choices) {
+        const key = String(ch.code);
+        if (map.has(key)) continue; // 同一件出现在多套套餐里，名称一样，留第一条
+        map.set(key, {
+          code: key,
+          name: ch.name,
+          comboCode: String(c.code),
+          comboName: String(c.name || c.code),
+          round: String(r.id),
+          roundName: r.name,
+        });
+      }
+    }
+  }
+  return map;
+}
+
+/**
  * 折扣文案：14.9 / 23 → 「6.5 折」
  * @param {number} payable
  * @param {number} listTotal
@@ -182,6 +272,8 @@ module.exports = {
   parseDiffPrice,
   normalizeRounds,
   buildComboIndex,
+  pickComboPlan,
+  buildChoiceMap,
   findDeals,
   discountLabel,
 };

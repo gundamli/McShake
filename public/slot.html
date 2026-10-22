@@ -429,6 +429,36 @@
   }
   .mini-btn:hover { background: #3a3f66; }
 
+  /* 「我要 1+1」开关：勾选后第 1 行锁 A 区、第 2 行锁 B 区 */
+  .combo-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 10px 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    color: #f4f1ea;
+    background: #2b2f4a;
+    border: 2px solid #4a4f7a;
+    cursor: pointer;
+    user-select: none;
+  }
+  .combo-toggle:hover { background: #3a3f66; }
+  .combo-toggle.on { border-color: var(--mcd-yellow); color: var(--mcd-yellow); }
+  .combo-toggle.disabled { opacity: 0.45; cursor: not-allowed; }
+  .combo-toggle input { width: 14px; height: 14px; cursor: pointer; accent-color: var(--mcd-yellow); margin: 0; }
+  .combo-hint {
+    margin: 8px 2px 0;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    line-height: 1.7;
+    letter-spacing: 0.05em;
+    color: var(--mcd-yellow);
+    opacity: 0.9;
+  }
+  .combo-hint.off { color: #8a90b0; }
+
   /* ---------- 结果面板 ---------- */
   .panel {
     margin-top: 20px;
@@ -662,9 +692,14 @@
 
     <div class="controls">
       <button class="spin-btn" id="spinBtn">SPIN</button>
+      <label class="combo-toggle" id="comboToggle" title="勾选后第 1 行只在 A 区摇、第 2 行只在 B 区摇，必定凑出 1+1；第 3 行不变">
+        <input type="checkbox" id="wantCombo">
+        <span>我要 1+1</span>
+      </label>
       <button class="mini-btn" id="soundBtn" title="同时控制音效与背景音乐">声音: 开</button>
       <button class="mini-btn" id="reloadBtn">换门店</button>
     </div>
+    <div class="combo-hint hidden" id="comboHint"></div>
   </div>
 
   <!-- 结果面板 -->
@@ -733,6 +768,11 @@
     lastTargets: null,
     lastCodes: null,       // 上一局摇出的三个 code，下单时原样回传
     lastResult: null,      // 上一局的结果：下单后在「待支付/已付款」之间来回切时要重算按钮
+    // 「我要 1+1」：comboReels 是服务端给的分区候选；reelSets 是**当前这一局**三列各自的符号集
+    wantCombo: false,
+    locked: false,         // 上一局是否真的在锁定模式下摇的
+    comboReels: null,
+    reelSets: [null, null, null],
   };
 
   var $ = function (id) { return document.getElementById(id); };
@@ -982,6 +1022,37 @@
   }
 
   // ---------------------------------------------------------------- 滚轮渲染
+
+  /**
+   * 「我要 1+1」时把第 1、2 列换成套餐的两个分区。
+   *
+   * 为什么两列必须来自**同一套**套餐：1+1 的成立条件是「两件同属一个套餐、且落在不同分区」，
+   * 跨套餐的两件拼不出套餐价，所以不能取所有套餐 choices 的并集。
+   * 第 3 列保持原符号集，仍然是「什么都可能摇出来」。
+   *
+   * @returns {Array<Array>} 三列各自的候选符号；不具备条件时三列都退回原符号集
+   */
+  function reelSetsNow() {
+    var base = [state.symbols, state.symbols, state.symbols];
+    if (!state.wantCombo) return base;
+    var cr = state.comboReels;
+    if (!cr || !cr.available) return base;
+    var a = (cr.rounds[0] || {}).symbols || [];
+    var b = (cr.rounds[1] || {}).symbols || [];
+    if (!a.length || !b.length) return base;
+    return [a, b, state.symbols];
+  }
+
+  /** 这一局是否真的锁了分区（第 1 列的集合已经换掉） */
+  function isLocked(sets) {
+    return !!(sets && sets[0] !== state.symbols);
+  }
+
+  /** 当前锁定的是哪套随心配（文案里要点名，让用户知道摇的是哪一套） */
+  function comboName() {
+    return (state.comboReels && state.comboReels.comboName) || '1+1 随心配';
+  }
+
   function cellHtml(s, size) {
     var src = s.image || s.remoteImage;
     var img = src
@@ -992,13 +1063,16 @@
   }
 
   function buildStrips() {
-    var n = state.symbols.length;
+    var sets = reelSetsNow();
+    state.reelSets = sets;
     for (var col = 0; col < 3; col++) {
+      var syms = sets[col] || state.symbols;
       var strip = $('strip' + col);
       var html = '';
-      // 重复 4 遍：保证滚动 ROUNDS 圈时不会出现空白
+      // 重复 4 遍：保证滚动 ROUNDS 圈时不会出现空白。
+      // 列长不同（锁 1+1 时前两列是分区件数），所以按列各自的 n 来铺。
       for (var rep = 0; rep < 4; rep++) {
-        for (var i = 0; i < n; i++) html += cellHtml(state.symbols[i]);
+        for (var i = 0; i < syms.length; i++) html += cellHtml(syms[i]);
       }
       strip.innerHTML = html;
       strip.style.transition = 'none';
@@ -1010,7 +1084,8 @@
   function animateReel(col, targetIdx, duration) {
     return new Promise(function (resolve) {
       var strip = $('strip' + col);
-      var n = state.symbols.length;
+      // 锁 1+1 时各列长度不同，圈数必须按本列的 n 算，否则会滚过头露出空白
+      var n = (state.reelSets[col] || state.symbols).length;
       var prev = state.prevIdx[col];
       var h = state.cellHeight;
 
@@ -1047,12 +1122,28 @@
     setBanner('转动中…', '');
     clearWinHighlight();
 
-    var targets = spin(state.symbols);
+    var sets = reelSetsNow();
+    state.reelSets = sets;
+    var locked = isLocked(sets);
+
+    // 锁定的两行各自等概率摇一件（它们本来就是候选池，不需要权重），
+    // 第三行照旧按权重摇——麦当劳的重量级招牌留在第三行也有机会出现。
+    var targets;
+    if (locked) {
+      targets = [pickOne(sets[0]), pickOne(sets[1]), weightedPick(sets[2])];
+    } else {
+      targets = spin(state.symbols);
+    }
     state.lastTargets = targets;
+    state.locked = locked;
 
     var ticker = setInterval(playTick, 90);
-    var idxs = targets.map(function (t) {
-      var i = state.symbols.findIndex(function (s) { return s.id === t.id; });
+    // 锁分区时 banner 要把「这一单必定成立」说在前面，
+    // 否则用户看到「未中奖」会以为 1+1 也没了——两件事互相独立。
+    var bannerPrefix = locked ? '1+1 已锁定 · ' : '';
+    var idxs = targets.map(function (t, col) {
+      var pool = sets[col] || state.symbols;
+      var i = pool.findIndex(function (s) { return s.id === t.id; });
       return i < 0 ? 0 : i;
     });
 
@@ -1071,10 +1162,15 @@
       if (res.level !== 'none') {
         highlightWin(targets, res);
         playWin(res.level);
-        setBanner(res.title + ' +' + res.payout + ' · ' + res.desc, res.level);
+        setBanner(bannerPrefix + res.title + ' +' + res.payout + ' · ' + res.desc, res.level);
       } else {
         playWin('none');
-        setBanner(res.title + ' · ' + res.desc, '');
+        setBanner(
+          locked
+            ? bannerPrefix + '这一单一定能凑出 ' + comboName()
+            : res.title + ' · ' + res.desc,
+          locked ? 'pair' : ''
+        );
       }
 
       state.spinning = false;
@@ -1214,7 +1310,18 @@
       var msg = '<span class="po">价格试算失败：' + escapeHtml(d.priceError || '未返回金额') + '</span>';
       // 逐件降级结果：明确指出哪一件买不了
       if (d.perItem && d.perItem.length) {
+        // 进了套餐的那两件**不需要单独的单价**，它们的价值已经体现在套餐价里。
+        // 演示快照只抓了滚轮符号的逐件单价，这些套餐子件必然「查不到价」——
+        // 照直说「不可售」会让人以为这单买不了，其实是我们的口径不对。
+        var inCombo = {};
+        if (d.combo && d.combo.available && d.combo.slots) {
+          d.combo.slots.forEach(function (s) { inCombo[String(s.code)] = s.roundName; });
+        }
         var lines = d.perItem.map(function (x) {
+          if (inCombo[String(x.code)]) {
+            return '<div class="po">· ' + escapeHtml(x.name) + ' —— 已计入「'
+              + escapeHtml(inCombo[String(x.code)]) + '」套餐价，不单独计价</div>';
+          }
           if (x.price && x.price.payable != null) {
             return '<div class="po">· ' + escapeHtml(x.name) + ' —— ¥' + Number(x.price.payable).toFixed(2) + '</div>';
           }
@@ -1353,6 +1460,74 @@
     (actions || []).forEach(function (a) { $('noticeActions').appendChild(a); });
     $('notice').classList.remove('hidden');
     $('machine').classList.add('hidden');
+  }
+
+  // ---------------------------------------------------------------- 「我要 1+1」
+  /**
+   * 开关的状态决定三件事：可用性（本店本时段有没有随心配）、提示文案、
+   * 以及滚轮内容——前两列换了符号就必须重建 strip，否则新的一列还在滚旧餐品。
+   */
+  function comboUsable() {
+    var cr = state.comboReels;
+    if (!cr || !cr.available) return false;
+    var a = (cr.rounds[0] || {}).symbols || [];
+    var b = (cr.rounds[1] || {}).symbols || [];
+    return a.length > 0 && b.length > 0;
+  }
+
+  function renderComboToggle() {
+    var usable = comboUsable();
+    var box = $('wantCombo');
+    var toggle = $('comboToggle');
+    var hint = $('comboHint');
+
+    box.disabled = !usable;
+    toggle.classList.toggle('disabled', !usable);
+    if (!usable) box.checked = false;
+    state.wantCombo = usable && box.checked;
+    toggle.classList.toggle('on', state.wantCombo);
+
+    if (!usable) {
+      // 原因分两种：压根没供应（时段不对），或供应了但分区拿不到货——文案要能分辨
+      var why = '这家店当前时段没有 1+1 随心配，开关暂不可用';
+      var cr2 = state.comboReels;
+      if (cr2 && cr2.reason === 'failed') why = '1+1 分区加载失败：' + (cr2.error || '未知原因');
+      else if (cr2 && cr2.reason === 'too_few') why = '这家店的 1+1 分区数量异常，锁不定所需的两个区';
+      else if (cr2 && cr2.available) why = '这家店的 1+1 分区没有可选餐品，开关暂不可用';
+      hint.textContent = why;
+      hint.classList.remove('hidden');
+      hint.classList.add('off');
+      return;
+    }
+
+    var cr = state.comboReels;
+    var a = cr.rounds[0], b = cr.rounds[1];
+    hint.classList.remove('hidden');
+    if (state.wantCombo) {
+      var noImg = cr.missingImage
+        ? '（其中 ' + cr.missingImage + ' 件套餐专属餐品没有官方图，显示为文字）'
+        : '';
+      // 剔掉的不可售子件要说出来：否则用户会发现列表少了东西，以为是 bug
+      var dropped = (cr.dropped && cr.dropped.length)
+        ? '（另有 ' + cr.dropped.length + ' 件当前不可售，已从候选里剔除）'
+        : '';
+      hint.textContent = '已锁定「' + cr.comboName + '」：第 1 行只在' + a.name + '摇（'
+        + a.symbols.length + ' 件），第 2 行只在' + b.name + '摇（' + b.symbols.length
+        + ' 件），所以必定凑得出 ' + cr.pairCount + ' 种组合之一' + noImg + dropped + '；第 3 行不变。';
+      hint.classList.remove('off');
+    } else {
+      hint.textContent = '勾上后：第 1 行只在' + a.name + '摇、第 2 行只在' + b.name
+        + '摇，这一单必定凑出「' + cr.comboName + '」；第 3 行仍然随便摇。';
+      hint.classList.add('off');
+    }
+  }
+
+  function bindComboToggle() {
+    $('wantCombo').addEventListener('change', function () {
+      renderComboToggle();
+      if (!$('machine').classList.contains('hidden')) buildStrips();
+      setBanner(state.wantCombo ? '已锁定 1+1 · 按 SPIN' : '按 SPIN 开始', '');
+    });
   }
 
   function initMachine() {
@@ -2030,6 +2205,10 @@
 
         openTokenPanel(false);
         state.symbols = d.symbols;
+        // 「我要 1+1」的分区候选随 symbols 一起下发；没有随心配时开关自动不可用。
+        // 必须在 initMachine 之前刷一次，否则首屏会带着上一次的勾选状态重建滚轮。
+        state.comboReels = d.comboReels || null;
+        renderComboToggle();
         // 优先显示中文门店名，缺失时退回编号（例如通过调试台直接指定门店的场景）
         var si = d.storeInfo || {};
         $('storeTag').textContent = si.name
@@ -2049,6 +2228,7 @@
     bindOrder();
 
     $('spinBtn').addEventListener('click', doSpin);
+    bindComboToggle();
 
     // 声音总开关：同时管音效与背景音乐。
     // 背景音乐一旦启动就持续运行，静音只把 master gain 拉到 0，
