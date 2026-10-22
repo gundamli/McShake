@@ -448,3 +448,31 @@ Token 仅在服务进程内存中保存，不写入磁盘；`.gitignore` 已排�
 
 - **并发打太密会被上游回 `508 太火爆了`**：286 组里有 19 组失败，改成串行小步重试后全部补齐；
 - **`query-nearby-stores` 的 `searchType=1` 是「收藏门店」**，按位置搜必须 `searchType=2`，否则列表为空、门店中文名会退化成编号。
+
+## 11. 一键下单：MCP 能建单，不能付款
+
+实测结论：**35 个工具里没有任何支付能力**（无 `pay` / `refund` / `confirm-payment` / 小程序跳转）。全链路只到「建单 + 付款链接」：
+
+```text
+calculate-price（取 takeWayList / 金额）
+  → create-order（takeWayCode 必传）
+  → { orderId, payId, payH5Url: https://m.mcd.cn/mcp/scanToPay?orderId=... }
+  → query-order 轮询（无 webhook、无回调）
+  → cancel-order（关单）
+```
+
+`payH5Url` 是移动端 H5 收银台（HTTP 200，带微信 JSSDK），**只能由人扫码或在微信里打开**。本项目把它渲染成二维码（`public/qrcode.js`，零依赖编码器，48 组用例经 OpenCV 解码验证），页面倒计时 15 分钟并轮询 `query-order`，用户付款后状态自动刷新。
+
+必须处理的契约细节：
+
+| 项 | 实测行为 | 处理方式 |
+|---|---|---|
+| `takeWayCode` | 到店场景**必传**，缺了回 `600010 检查必填参数` | 只接受 `calculate-price` 返回的 `takeWayList[]`（`eat-in` 堂食 / `take-in-store` 外带），前端传值必须过白名单 |
+| 金额单位 | `calculate-price` 给**分**（`price: 2690`），`create-order` 回**元的字符串**（`realTotalAmount: "26.9"`） | 统一在 `src/order.js` 里转成数字元输出 |
+| 促销 | 服务端自动挑最优，不需要传券；实测该店 `query-store-coupons` 返回 0 张 | 不传 `couponId`，直接展示回包的优惠金额 |
+| 套餐下单 | 必须带 `roundList`（每个分区选中的子件），回包 `orderProductList[].comboItemList` 会列出子件 | `buildOrderItems()` 发「套餐项 + 没进套餐的剩余单品」 |
+| 支付窗口 | `expirePayTime` = 创建时间 + **15 分钟**，过期自动关单 | 前端倒计时，到点提示已过期 |
+| 状态码 | `10` 待支付 / `60` 已取消；重复取消回 `600064 订单已经取消` | `describeStatus()` 归一出 `waiting / paid / cancelled` |
+| 每日上限 | 同一账号当天建到第 4 单被拒：`今日下单数已经上限` | 原样把错误文案回给用户，不重试 |
+
+三条安全约定：订单只可能建在**填了 Token 的那个人**的账号里；演示模式（快照）下 `/api/order/create` 直接 `403`，按钮文案固定为「演示模式无法下单」；关弹窗不取消订单（用户可能正在扫码），只有显式点取消或超时才关单。

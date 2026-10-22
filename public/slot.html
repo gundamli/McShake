@@ -190,6 +190,60 @@
   .store-results { margin-top: 12px; font-size: 11px; color: #cfd6ff; line-height: 1.9; }
   .store-tip { font-size: 10px; color: #7a749c; margin-top: 10px; line-height: 1.7; }
 
+  /* ---------- 下单弹窗 ---------- */
+  .order-box { max-width: 400px; }
+  .ow-amount { margin: 6px 0 2px; }
+  .ow-amount .v {
+    font-size: 34px; color: var(--mcd-yellow);
+    text-shadow: 3px 3px 0 #4a1214; letter-spacing: 0.02em;
+  }
+  .ow-amount .sub { font-size: 10px; color: #9a92b5; letter-spacing: 0.08em; margin-top: 4px; }
+  .ow-list {
+    margin: 12px 0; padding: 8px 10px; text-align: left;
+    border: 2px dashed #3c4168; font-size: 11px; line-height: 1.9; color: #cfd6ff;
+  }
+  .ow-list .combo { color: var(--mcd-yellow); }
+  .ow-label { font-size: 10px; color: #7a749c; text-align: left; letter-spacing: 0.12em; margin: 14px 0 6px; }
+  .tw-row { display: flex; gap: 8px; }
+  .tw-opt {
+    flex: 1; font-family: inherit; font-size: 12px; padding: 10px 4px;
+    background: #0d1020; border: 2px solid #4a4f7a; color: #cfd6ff; cursor: pointer;
+    letter-spacing: 0.06em;
+  }
+  .tw-opt.on { border-color: var(--mcd-yellow); color: var(--mcd-yellow); background: #1a1330; }
+  .silly {
+    display: flex; gap: 8px; align-items: flex-start; text-align: left;
+    margin: 16px 0 12px; padding: 10px; border: 2px dashed #4a4f7a;
+    cursor: pointer; font-size: 11px; line-height: 1.75; color: #b9c4ea;
+  }
+  .silly.on { border-color: var(--mcd-yellow); color: #f4f1ea; }
+  .silly input { margin: 3px 0 0; accent-color: var(--mcd-yellow); flex: none; }
+  .ow-btn {
+    width: 100%; font-family: inherit; font-size: 13px; letter-spacing: 0.1em;
+    padding: 12px; background: var(--mcd-yellow); color: #3a1400;
+    border: 0; box-shadow: 0 4px 0 #8a6a00; cursor: pointer;
+  }
+  .ow-btn:disabled { background: #3a3f63; color: #7a7fa8; box-shadow: 0 4px 0 #232747; cursor: not-allowed; }
+  .ow-tip { font-size: 10px; color: #7a749c; line-height: 1.75; margin-top: 12px; }
+  .ow-tip.warn { color: #ff9d9d; }
+  .ow-link {
+    font-family: inherit; font-size: 10px; background: none; border: 0;
+    color: #7a749c; text-decoration: underline; cursor: pointer; margin-top: 10px;
+  }
+  .ow-link:hover { color: #cfd6ff; }
+  /* 二维码 */
+  .qr-wrap { background: #fff; padding: 10px; display: inline-block; margin: 4px 0 10px; }
+  .qr-wrap canvas { display: block; width: 216px; height: 216px; image-rendering: pixelated; }
+  .qr-count { font-size: 12px; color: var(--mcd-yellow); letter-spacing: 0.1em; }
+  .qr-count.urgent { color: #ff9d9d; }
+  .qr-steps { font-size: 10px; color: #9a92b5; line-height: 1.9; text-align: left; margin: 12px 0 0; }
+  .qr-status {
+    font-size: 11px; margin-top: 12px; padding: 8px;
+    border: 2px solid #4a4f7a; color: #cfd6ff; line-height: 1.7;
+  }
+  .qr-status.ok { border-color: #6ee7a0; color: #6ee7a0; }
+  .qr-status.bad { border-color: #ff9d9d; color: #ff9d9d; }
+
   /* ---------- 机身 ---------- */
   .cabinet {
     background: var(--mcd-red);
@@ -645,6 +699,18 @@
   </div>
 </div>
 
+<!-- 一键下单：金额 → 取餐方式 → 无厘头确认 → 二维码 -->
+<div id="orderModal" class="modal hidden">
+  <div class="modal-box order-box">
+    <div class="modal-head">
+      <h3 id="orderModalTitle">下单确认</h3>
+      <button class="modal-close" id="orderModalClose" aria-label="关闭">×</button>
+    </div>
+    <div id="orderModalBody"></div>
+  </div>
+</div>
+
+<script src="qrcode.js"></script>
 <script>
 (function () {
   'use strict';
@@ -665,6 +731,8 @@
     muted: false,
     cellHeight: 132,
     lastTargets: null,
+    lastCodes: null,       // 上一局摇出的三个 code，下单时原样回传
+    lastResult: null,      // 上一局的结果：下单后在「待支付/已付款」之间来回切时要重算按钮
   };
 
   var $ = function (id) { return document.getElementById(id); };
@@ -1046,6 +1114,7 @@
   // ---------------------------------------------------------------- 结果（营养 + 价格）
   function loadResult(codes) {
     var panel = $('resultPanel');
+    state.lastCodes = codes;   // 下单要用同一组 code，不能让前端自己再拼一遍
     $('mealRow').innerHTML = '<div class="mv">正在查询营养与价格…</div>';
     $('nutriGrid').innerHTML = '';
     $('priceBox').innerHTML = '';
@@ -1073,6 +1142,8 @@
   }
 
   function renderResult(d) {
+    state.lastResult = d;
+
     // 餐品卡片
     $('mealRow').innerHTML = (d.items || []).map(function (it) {
       var imgSrc = it.image || it.remoteImage;
@@ -1559,13 +1630,38 @@
     });
   }
 
-  // ---------------------------------------------------------------- 一键下单（占位）
+  // ---------------------------------------------------------------- 一键下单
   /**
-   * 按钮可用性与「本单是否有优惠」绑定。
+   * 下单分两步走：
    *
-   * 一键下单目前只是占位，若始终可点，用户点下去发现什么也没发生会更困惑。
-   * 无优惠（或价格都没试算出来）时直接置灰，并在下方说明原因。
+   *   1) 确认页：金额由服务端现算（页面上那个数字可能已经被上一局覆盖），
+   *      选堂食/外带，再勾一句无厘头的承诺才解锁按钮。
+   *      —— 误触一步就是一笔真订单，值得多问一遍。
+   *   2) 二维码页：MCP 只能建单、**没有支付工具**，真正收银台是建单返回的
+   *      payH5Url，只能交给人扫码；15 分钟窗口，靠轮询 query-order 看结果。
+   *
+   * 关掉弹窗不会取消订单（用户可能正拿手机扫码），只有显式点「取消」
+   * 或等 15 分钟自动关单。再次点一键下单会回到二维码页。
    */
+  var SILLY_CONFIRMS = [
+    '我确认：这单是我自己摇出来的，不是鸡腿堡托梦',
+    '我确认：吃完这顿不会变成一根薯条',
+    '我确认：价格是系统算的，运气是我自己的',
+    '我确认：如果后悔，那是味蕾的事，跟老虎机没有关系',
+    '我确认：不再为了「再摇个更好的」重来一次，就这单',
+    '我确认：我已知晓这顿的热量，并且我依然愿意',
+    '我确认：付款要用我自己手机，老虎机不会替我付'
+  ];
+
+  var orderState = {
+    preview: null,
+    takeWay: null,
+    silly: '',
+    order: null,
+    tick: null,
+    poll: null
+  };
+
   function updateOrderButton(d) {
     var btn = $('orderBtn');
     var note = $('orderNote');
@@ -1573,15 +1669,26 @@
     var discount = p && Number(p.discount) > 0 ? Number(p.discount) : 0;
     var c = d && d.combo && d.combo.available ? d.combo : null;
 
+    // 有一笔待支付订单时，按钮的语义变成「回到付款码」
+    var pending = orderState.order && orderState.order.status && orderState.order.status.waiting
+      ? orderState.order : null;
+    if (pending) {
+      btn.disabled = false;
+      note.textContent = '有一笔待支付订单 ¥' + Number(pending.payable).toFixed(2) + ' · 点按钮回到付款码';
+      note.classList.add('flash');
+      return;
+    }
+    note.classList.remove('flash');
+
     // 能拼 1+1 也算「有折扣」——用户要的就是这种单
     btn.disabled = !discount && !c;
     if (c) {
       var saveText = c.saving ? '，省 ¥' + Number(c.saving).toFixed(2) : '';
       // 有剩余单品时报「本单实付」，只报套餐价会与上面的合计对不上
       var pay = c.totalPayable != null ? c.totalPayable : c.payable;
-      note.textContent = '可拼 ' + c.name + '：本单 ¥' + Number(pay).toFixed(2) + saveText + ' · 下单功能规划中';
+      note.textContent = '可拼 ' + c.name + '：本单 ¥' + Number(pay).toFixed(2) + saveText;
     } else if (discount) {
-      note.textContent = '本单可享 ¥' + discount.toFixed(2) + ' 优惠 · 下单功能规划中';
+      note.textContent = '本单可享 ¥' + discount.toFixed(2) + ' 优惠 · 点按钮可下单';
     } else if (!d) {
       note.textContent = '先摇出带优惠的组合，才谈得上下单';
     } else if (!p) {
@@ -1593,18 +1700,290 @@
     }
   }
 
+  function setOrderNote(text, isWarn) {
+    var note = $('orderNote');
+    note.textContent = text;
+    note.classList.toggle('flash', Boolean(isWarn));
+  }
+
+  // -------------------------------------------------- 第一步：确认页
+  function openOrderModal() {
+    var codes = state.lastCodes;
+    if (!codes || !codes.length) return;
+
+    // 有待支付订单：直接回到二维码，不要重复建单
+    var pending = orderState.order && orderState.order.status && orderState.order.status.waiting
+      ? orderState.order : null;
+    if (pending) {
+      $('orderModalTitle').textContent = '扫码付款';
+      $('orderModal').classList.remove('hidden');
+      renderOrderQr(pending, orderState.takeWay, true);
+      return;
+    }
+
+    stopOrderTimers();
+    orderState.preview = null;
+    orderState.takeWay = null;
+    orderState.order = null;
+    orderState.silly = SILLY_CONFIRMS[Math.floor(Math.random() * SILLY_CONFIRMS.length)];
+
+    $('orderModalTitle').textContent = '下单确认';
+    $('orderModalBody').innerHTML = '<p class="modal-desc">正在向门店复核金额…</p>';
+    $('orderModal').classList.remove('hidden');
+
+    fetch('/api/order/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ codes: codes })
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (pv) {
+        if (!pv.ok) { renderOrderError(pv.error || '金额复核失败'); return; }
+        orderState.preview = pv;
+        orderState.takeWay = (pv.takeWayList && pv.takeWayList[0] && pv.takeWayList[0].code) || null;
+        renderOrderPreview(pv);
+      })
+      .catch(function (err) { renderOrderError('网络异常：' + err.message); });
+  }
+
+  function renderOrderPreview(pv) {
+    var body = $('orderModalBody');
+    var c = pv.combo;
+
+    var rows = (pv.items || []).map(function (it, i) {
+      return '<div>' + (i + 1) + '. ' + escapeHtml(it.name) + '</div>';
+    }).join('');
+    if (c && c.slots && c.slots.length) {
+      rows += '<div class="combo">拼成 ' + escapeHtml(c.name) + '：'
+        + c.slots.map(function (s) { return escapeHtml(s.roundName + '·' + s.name); }).join(' + ')
+        + ' → ¥' + Number(c.payable).toFixed(2) + '</div>';
+    }
+    if (c && c.extraItems && c.extraItems.length) {
+      rows += '<div class="combo">没进套餐、照单点算：'
+        + c.extraItems.map(function (e) { return escapeHtml(e.name || e.code); }).join('、') + '</div>';
+    }
+
+    var sub = [];
+    if (c && c.saving) sub.push('省 ¥' + Number(c.saving).toFixed(2));
+    else if (pv.discount > 0) sub.push('已优惠 ¥' + Number(pv.discount).toFixed(2));
+    sub.push((pv.storeInfo && pv.storeInfo.name) || '');
+
+    var tw = (pv.takeWayList || []).map(function (t) {
+      return '<button class="tw-opt' + (t.code === orderState.takeWay ? ' on' : '')
+        + '" data-tw="' + escapeAttr(t.code) + '">' + escapeHtml(t.title) + '</button>';
+    }).join('');
+
+    var demo = Boolean(pv.demo);
+    body.innerHTML = ''
+      + '<div class="ow-amount"><div class="v">¥' + Number(pv.payable).toFixed(2) + '</div>'
+      + '<div class="sub">' + escapeHtml(sub.filter(Boolean).join(' · ')) + '</div></div>'
+      + '<div class="ow-list">' + rows + '</div>'
+      + (tw ? '<div class="ow-label">怎么吃</div><div class="tw-row">' + tw + '</div>' : '')
+      + '<label class="silly" id="sillyBox"><input type="checkbox" id="sillyCheck">'
+      + '<span>' + escapeHtml(orderState.silly) + '</span></label>'
+      + '<button class="ow-btn" id="orderConfirmBtn" disabled>确认并生成订单</button>'
+      + '<div class="ow-tip' + (demo ? ' warn' : '') + '">'
+      + (demo
+        ? '演示模式：快照里没有下单能力，这里只是把金额算给你看。填入自己的 MCP Token 后才能真正建单。'
+        : '确认后会在你的麦当劳账号里生成一笔待支付订单，付款仍需你用手机扫码。')
+      + '</div>';
+
+    Array.prototype.forEach.call(body.querySelectorAll('.tw-opt'), function (btn) {
+      btn.addEventListener('click', function () {
+        orderState.takeWay = btn.getAttribute('data-tw');
+        Array.prototype.forEach.call(body.querySelectorAll('.tw-opt'), function (b) {
+          b.classList.toggle('on', b === btn);
+        });
+      });
+    });
+
+    var check = $('sillyCheck');
+    var confirmBtn = $('orderConfirmBtn');
+    check.addEventListener('change', function () {
+      if (demo) return;
+      $('sillyBox').classList.toggle('on', check.checked);
+      confirmBtn.disabled = !check.checked;
+    });
+    if (demo) {
+      check.disabled = true;
+      confirmBtn.textContent = '演示模式无法下单';
+    } else {
+      confirmBtn.addEventListener('click', submitOrder);
+    }
+  }
+
+  function renderOrderError(msg) {
+    $('orderModalBody').innerHTML = '<p class="modal-desc" style="color:#ff9d9d">'
+      + escapeHtml(msg) + '</p>'
+      + '<button class="ow-btn" id="orderRetryBtn">重试</button>';
+    var btn = $('orderRetryBtn');
+    if (btn) btn.addEventListener('click', openOrderModal);
+  }
+
+  // -------------------------------------------------- 第二步：建单 + 二维码
+  function submitOrder() {
+    var btn = $('orderConfirmBtn');
+    if (!btn || btn.disabled) return;
+    btn.disabled = true;
+    btn.textContent = '正在向门店建单…';
+
+    fetch('/api/order/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ codes: state.lastCodes, takeWayCode: orderState.takeWay })
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (!res.ok) { renderOrderError(res.error || '下单失败'); return; }
+        orderState.order = res.order;
+        orderState.takeWay = res.takeWay || null;
+        $('orderModalTitle').textContent = '扫码付款';
+        renderOrderQr(res.order, res.takeWay, false);
+        updateOrderButton(state.lastResult);
+      })
+      .catch(function (err) { renderOrderError('网络异常：' + err.message); });
+  }
+
+  function renderOrderQr(o, takeWay, resumed) {
+    var body = $('orderModalBody');
+    var sub = [o.storeName || '', takeWay && takeWay.title ? takeWay.title : '', '待支付'];
+    body.innerHTML = ''
+      + '<div class="ow-amount"><div class="v">¥' + Number(o.payable).toFixed(2) + '</div>'
+      + '<div class="sub">' + escapeHtml(sub.filter(Boolean).join(' · ')) + '</div></div>'
+      + '<div class="qr-wrap"><canvas id="orderQrCanvas"></canvas></div>'
+      + '<div class="qr-count" id="qrCount">--:--</div>'
+      + '<div class="qr-steps">手机扫码 → 微信/支付宝付款<br>'
+      + '付款后本页会自动刷新状态，不用手动刷新</div>'
+      + '<div class="qr-status" id="qrStatus">' + (resumed ? '这单还在等你付款' : '订单已生成，等待付款…') + '</div>'
+      + '<button class="ow-link" id="orderCancelBtn">不吃了，取消这笔订单</button>';
+
+    var canvas = $('orderQrCanvas');
+    if (o.payH5Url && window.QRLite) {
+      try {
+        QRLite.toCanvas(canvas, o.payH5Url, { scale: 8, quiet: 3 });
+      } catch (err) {
+        // 二维码画不出来时，至少把链接给出来，别让人卡在这一屏
+        canvas.outerHTML = '<div class="ow-tip" style="word-break:break-all">'
+          + escapeHtml(o.payH5Url) + '</div>';
+      }
+    } else {
+      canvas.outerHTML = '<div class="ow-tip">下单接口没返回付款链接，请到麦当劳 APP 的「我的订单」里继续支付。</div>';
+    }
+
+    $('orderCancelBtn').addEventListener('click', function () { cancelOrder(true); });
+
+    // 15 分钟支付窗口：官方 expirePayTime，取不到就按 15 分钟兜底
+    var expireAt = o.expireAt || (Date.now() + 15 * 60 * 1000);
+    startCountdown(expireAt);
+    orderState.poll = setInterval(pollOrder, 5000);
+  }
+
+  function startCountdown(expireAt) {
+    var el = $('qrCount');
+    if (!el) return;
+    var render = function () {
+      var left = Math.max(0, expireAt - Date.now());
+      var mm = Math.floor(left / 60000);
+      var ss = Math.floor((left % 60000) / 1000);
+      el.textContent = (left > 0 ? mm + ':' + (ss < 10 ? '0' : '') + ss + ' 内付款有效' : '已超过 15 分钟支付窗口');
+      el.classList.toggle('urgent', left < 120000);
+      if (left <= 0 && orderState.tick) {
+        clearInterval(orderState.tick);
+        orderState.tick = null;
+        var st = $('qrStatus');
+        if (st && !st.classList.contains('ok')) {
+          st.className = 'qr-status bad';
+          st.textContent = '订单已过支付窗口，门店会自动关单。重新摇一单吧。';
+        }
+        stopPolling();
+      }
+    };
+    if (orderState.tick) clearInterval(orderState.tick);
+    render();
+    orderState.tick = setInterval(render, 1000);
+  }
+
+  function stopPolling() {
+    if (orderState.poll) { clearInterval(orderState.poll); orderState.poll = null; }
+  }
+
+  function stopOrderTimers() {
+    if (orderState.tick) { clearInterval(orderState.tick); orderState.tick = null; }
+    stopPolling();
+  }
+
+  /** MCP 没有支付回调，只能轮询 query-order */
+  function pollOrder() {
+    var o = orderState.order;
+    if (!o || !o.orderId) return;
+    fetch('/api/order/status?orderId=' + encodeURIComponent(o.orderId))
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        if (!res.ok || !res.order) return;
+        orderState.order = res.order;
+        var st = $('qrStatus');
+        if (res.order.status.paid) {
+          stopOrderTimers();
+          if (st) {
+            st.className = 'qr-status ok';
+            st.textContent = '已支付 ✓ '
+              + (res.order.pickupCode ? '取餐号 ' + res.order.pickupCode : '去柜台或取餐屏等号吧');
+          }
+          var countEl = $('qrCount');
+          if (countEl) { countEl.textContent = '付款完成'; countEl.className = 'qr-count'; }
+          playWin('jackpot');
+          // 先把按钮状态刷回「可下单」，再写已付款文案——否则会被上一个分支的默认文案盖掉
+          updateOrderButton(state.lastResult);
+          setOrderNote('已付款 ✓ 这单是真的麦门显灵', false);
+        } else if (res.order.status.cancelled) {
+          stopOrderTimers();
+          if (st) { st.className = 'qr-status bad'; st.textContent = '订单已取消'; }
+          var c2 = $('qrCount');
+          if (c2) { c2.textContent = '这单已经关掉了'; c2.className = 'qr-count'; }
+          setOrderNote('这笔订单已取消（可能是超时关单），重新摇一单吧', true);
+        }
+      })
+      .catch(function () { /* 轮询失败不打断，下一轮再试 */ });
+  }
+
+  /**
+   * 取消订单。
+   * 只有显式点「取消」才真取消；关弹窗不取消，用户可能正拿手机扫码。
+   */
+  function cancelOrder(closeModal) {
+    var o = orderState.order;
+    stopOrderTimers();
+    if (o && o.orderId) {
+      fetch('/api/order/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: o.orderId })
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+          setOrderNote(res.ok ? '已取消这笔待支付订单' : ('取消失败：' + (res.error || '去麦当劳 APP 里手动取消')), !res.ok);
+        })
+        .catch(function () { setOrderNote('取消请求失败，去麦当劳 APP 里手动取消吧', true); });
+    }
+    orderState.order = null;
+    if (closeModal) $('orderModal').classList.add('hidden');
+    // 取消之后这一局的结果还在，按钮不该跟着变灰
+    updateOrderButton(state.lastResult);
+  }
+
   function bindOrder() {
     $('orderBtn').addEventListener('click', function () {
-      var note = $('orderNote');
-      var base = note.textContent;
-      note.textContent = '下单功能还在规划中 · 需要先把地址、取餐方式与支付回调打通，避免误触产生真实订单';
-      note.classList.add('flash');
-      beep(330, 0.1, 'square', 0.05);
-      setTimeout(function () { beep(262, 0.14, 'square', 0.05); }, 110);
-      setTimeout(function () {
-        note.classList.remove('flash');
-        note.textContent = base;
-      }, 3200);
+      beep(660, 0.08, 'square', 0.04);
+      openOrderModal();
+    });
+    $('orderModalClose').addEventListener('click', function () {
+      // 只是收起来，订单还在：15 分钟内再点一键下单就能回到二维码
+      stopOrderTimers();
+      $('orderModal').classList.add('hidden');
+      if (orderState.order) updateOrderButton(state.lastResult);
+    });
+    $('orderModal').addEventListener('click', function (e) {
+      if (e.target === $('orderModal')) $('orderModalClose').click();
     });
   }
 

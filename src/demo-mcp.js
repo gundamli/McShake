@@ -22,6 +22,15 @@ const path = require('path');
 
 const SNAPSHOT_PATH = path.join(__dirname, '..', 'demo', 'demo-snapshot.json');
 
+/**
+ * 取餐方式是平台的固定枚举（实测 calculate-price 的 data.takeWayList），
+ * 与门店、时段无关，所以快照没抓到也不影响演示——下单弹窗要靠它列选项。
+ */
+const TAKE_WAY = [
+  { code: 'eat-in', title: '堂食' },
+  { code: 'take-in-store', title: '外带' },
+];
+
 /** 读快照；不存在则返回 null（服务端据此决定是否启用演示模式） */
 function loadSnapshot(file = SNAPSHOT_PATH) {
   try {
@@ -199,7 +208,13 @@ class DemoMcpClient {
       if (expanded.length <= 3) {
         const key = expanded.slice().sort().join('|');
         const hit = this.priceTable[key];
-        if (hit && !hit.failed) return { success: true, code: 0, data: hit };
+        if (hit && !hit.failed) {
+          return {
+            success: true,
+            code: 0,
+            data: Object.assign({ takeWayList: TAKE_WAY }, hit),
+          };
+        }
         // 组合本身在抓取时失败（上游 508 等），退化为逐件合成，不编折扣
       }
     }
@@ -254,6 +269,7 @@ class DemoMcpClient {
         price: payable,
         discount: Math.max(0, original - payable),
         productList: lines,
+        takeWayList: TAKE_WAY,
       },
     };
   }

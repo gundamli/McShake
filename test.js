@@ -606,6 +606,74 @@ console.log(`\n[9] 演示快照（线上试玩的数据源）`);
   }
 }
 
+console.log('\n[10] 一键下单：参数翻译与回包收敛');
+{
+  const order = require('./src/order');
+
+  // 取餐方式是白名单：前端传来的字符串绝不能直接进 create-order
+  const tw = order.normalizeTakeWay([
+    { code: 'eat-in', title: '堂食' },
+    { code: 'take-in-store', title: '外带' },
+    { code: 'eat-in', title: '重复项' },
+    { title: '没有 code' },
+  ]);
+  check('takeWayList 去重且过滤无 code 项', tw.length === 2 && tw[0].code === 'eat-in', JSON.stringify(tw));
+  check('未知取餐方式回退到第一个', order.pickTakeWay(tw, 'fly-away') === tw[0]);
+  check('已知取餐方式精确命中', order.pickTakeWay(tw, 'take-in-store') === tw[1]);
+  check('空列表不返回取餐方式', order.pickTakeWay([], 'eat-in') === null);
+
+  // 能拼 1+1：套餐项在前（带 roundList），没进套餐的照单点跟在后面
+  const comboDeal = {
+    available: true,
+    code: '9900011872',
+    roundList: [
+      { round: '1', comboItemList: [{ code: '1401', quantity: 1 }] },
+      { round: '2', comboItemList: [{ code: '4437', quantity: 1 }] },
+    ],
+    extraItems: [{ code: '1406', name: '板烧鸡腿堡' }],
+  };
+  const items = order.buildOrderItems([{ code: '1401' }, { code: '4437' }, { code: '1406' }], comboDeal);
+  check('套餐下单只发「套餐项 + 剩余单品」', items.length === 2 && items[0].productCode === '9900011872',
+    JSON.stringify(items));
+  check('套餐项带 roundList 两个分区', items[0].roundList.length === 2 && items[0].roundList[0].round === '1');
+  check('剩余单品按单点发', items[1].productCode === '1406' && !items[1].roundList);
+  const plain = order.buildOrderItems([{ code: '1401' }, { code: '4437' }], null);
+  check('没有套餐时逐件发', plain.length === 2 && plain.every((i) => i.quantity === 1));
+
+  // 金额单位：calculate-price 给分，create-order 给元的字符串
+  check('元字符串转数字', order.toYuan('26.9') === 26.9, `got ${order.toYuan('26.9')}`);
+  check('已带货币符号也能解析', order.toYuan('¥26.90') === 26.9);
+  check('空值不当作 0 元', order.toYuan('') === null && order.toYuan(null) === null);
+
+  // 支付截止时间是门店本地时间（UTC+8），不带时区
+  const exp = order.parseExpireAt('2026-10-22 08:02:47');
+  check('expirePayTime 按 UTC+8 解析', exp === Date.UTC(2026, 9, 22, 0, 2, 47), `got ${exp}`);
+
+  check('待支付等待中', order.describeStatus({ status: 10, orderStatus: '待支付' }).waiting === true);
+  check('已取消是终态', order.describeStatus({ status: 60, orderStatus: '订单已取消' }).cancelled === true);
+  check('已支付能被识别', order.describeStatus({ status: 20, orderStatus: '已支付' }).paid === true);
+
+  const normalized = order.normalizeOrder({
+    orderId: '1030783210000795859126729765',
+    payH5Url: 'https://m.mcd.cn/mcp/scanToPay?orderId=1030783210000795859126729765',
+    orderDetail: {
+      orderStatus: '待支付', status: 10,
+      totalAmount: '34', realTotalAmount: '26.9', totalDiscountAmount: '7.1',
+      takeWay: '外带', storeName: '麦当劳杭州三里亭餐厅',
+      expirePayTime: '2026-10-22 08:02:47',
+      orderProductList: [{
+        productName: '芝芝火腿扒堡', quantity: 1, price: '13',
+        comboItemList: [{ itemName: '麦乐鸡5块', itemQuantity: 1 }],
+      }],
+    },
+  });
+  check('回包收敛出 orderId 与付款链接', normalized.orderId === '1030783210000795859126729765'
+    && /scanToPay/.test(normalized.payH5Url));
+  check('实付金额转成数字元', normalized.payable === 26.9 && normalized.discount === 7.1);
+  check('套餐子件被展开', normalized.products[0].comboItems[0].name === '麦乐鸡5块');
+  check('支付截止时间带毫秒戳', typeof normalized.expireAt === 'number' && normalized.expireAt > 0);
+}
+
 console.log(`\n结果：${pass} 通过，${fail} 失败\n`);
 process.exit(fail === 0 ? 0 : 1);
 })();

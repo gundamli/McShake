@@ -24,6 +24,7 @@ const normalizePriceResult = optimizer.normalizePriceResult;
 const slot = require('./src/slot');
 const storeQuery = require('./src/store-query');
 const combo = require('./src/combo');
+const order = require('./src/order');
 const demoSource = require('./src/demo-mcp');
 
 const PORT = Number(process.env.PORT) || 8787;
@@ -60,6 +61,8 @@ const session = {
   /** 演示模式：无 Token 时用 demo/demo-snapshot.json 快照重放真实数据 */
   demo: false,
   demoMeta: null,
+  /** 最近一笔真实订单（含 payH5Url），只在内存里，进程重启即丢 */
+  lastOrder: null,
 };
 
 /** 可售性预检结果的缓存时长（5 分钟），避免反复消耗 MCP 配额 */
@@ -522,6 +525,8 @@ async function evaluateCombo(items, cartPrice) {
       code: s.code,
       diffPrice: s.diffPrice,
     })),
+    // 下单用：把套餐子件结构一并带出去，避免前端再算一遍（也避免前端伪造）
+    roundList: best.deal.roundList,
     note: hasSaving
       ? (extras.length
         ? `其中两件能拼「${best.deal.comboName}」（¥${best.price.payable.toFixed(2)}），加上${extraNames}本单实付 ¥${totalPayable.toFixed(2)}，比单点省 ¥${saving.toFixed(2)}`
@@ -530,6 +535,50 @@ async function evaluateCombo(items, cartPrice) {
         ? `其中两件能拼「${best.deal.comboName}」，加上${extraNames}本单实付 ¥${(totalPayable == null ? best.price.payable : totalPayable).toFixed(2)}`
         : `把这两件拼成「${best.deal.comboName}」，实付 ¥${best.price.payable.toFixed(2)}`),
   };
+}
+
+// ---------------------------------------------------------------- 一键下单
+
+/**
+ * 下单前的统一准备：校验餐品 → 重算价格 → 判 1+1 → 取取餐方式。
+ *
+ * preview 和 create 都走这里，保证「弹窗里看到的金额」与「真正建单的金额」同源，
+ * 也顺手挡掉前端伪造 code 或伪造金额。
+ *
+ * @param {string[]} codes 摇出的餐品编码
+ */
+async function prepareOrder(codes) {
+  if (!session.mcp) throw Object.assign(new Error('尚未连接 MCP 服务'), { status: 400 });
+  if (!session.storeContext || !session.storeContext.storeCode) {
+    throw Object.assign(new Error('还没选门店，先选一家门店'), { status: 400 });
+  }
+
+  const items = [];
+  for (const code of Array.isArray(codes) ? codes : []) {
+    const meal = session.menu.find((x) => String(x.code) === String(code));
+    if (!meal) throw Object.assign(new Error(`「${code}」不在当前门店菜单里，菜单可能已更新`), { status: 400 });
+    items.push({ code: String(meal.code), name: meal.name });
+  }
+  if (!items.length) throw Object.assign(new Error('没有可下单的餐品'), { status: 400 });
+
+  const args = buildPriceArgs({ items: items.map((i) => ({ code: i.code, quantity: 1 })) }, null);
+  const data = await session.mcp.callTool('calculate-price', args);
+  const price = normalizePriceResult(data);
+  if (!price || price.failed) {
+    throw Object.assign(new Error((price && price.message) || '计价失败，暂时不能下单'), { status: 400 });
+  }
+
+  const comboDeal = await evaluateCombo(items, price).catch(() => null);
+  const raw = data && data.data ? data.data : (data || {});
+  const takeWayList = order.normalizeTakeWay(raw.takeWayList);
+  const orderItems = order.buildOrderItems(items, comboDeal);
+
+  // 能拼 1+1 时以「套餐 + 剩余单品」的合计为准，否则用整单单点价
+  const payable = comboDeal && comboDeal.available && comboDeal.totalPayable != null
+    ? comboDeal.totalPayable
+    : price.payable;
+
+  return { items, price, combo: comboDeal, takeWayList, orderItems, payable };
 }
 
 // ---------------------------------------------------------------- HTTP 服务
@@ -1018,6 +1067,128 @@ async function handleApi(req, res, url) {
           address: session.storeContext.storeAddress || '',
         },
       });
+    } catch (err) {
+      return sendJson(res, 200, { ok: false, error: err.message });
+    }
+  }
+
+  // -------------------------------------------------- 一键下单
+
+  // 出弹窗前的价格复核：金额、取餐方式都从服务端现算，前端只负责展示
+  if (pathname === '/api/order/preview' && method === 'POST') {
+    const body = await readBody(req);
+    const codes = Array.isArray(body.codes) ? body.codes.slice(0, 3).map(String) : [];
+    try {
+      const plan = await prepareOrder(codes);
+      return sendJson(res, 200, {
+        ok: true,
+        demo: Boolean(session.demo),
+        payable: plan.payable,
+        original: plan.price.original,
+        discount: plan.price.discount,
+        takeWayList: plan.takeWayList,
+        combo: plan.combo && plan.combo.available
+          ? {
+            name: plan.combo.name,
+            payable: plan.combo.payable,
+            totalPayable: plan.combo.totalPayable,
+            saving: plan.combo.saving,
+            discountLabel: plan.combo.discountLabel,
+            slots: plan.combo.slots,
+            extraItems: plan.combo.extraItems,
+          }
+          : null,
+        items: plan.items,
+        storeInfo: {
+          code: session.storeContext.storeCode || null,
+          name: session.storeContext.storeName || '',
+          address: session.storeContext.storeAddress || '',
+        },
+      });
+    } catch (err) {
+      return sendJson(res, 200, { ok: false, error: err.message });
+    }
+  }
+
+  // 真正建单：会产生一笔待支付订单（付款仍需人扫码）
+  if (pathname === '/api/order/create' && method === 'POST') {
+    const body = await readBody(req);
+    if (session.demo) {
+      return sendJson(res, 403, {
+        ok: false,
+        demo: true,
+        error: '演示模式不能真实下单：快照里没有下单能力，填入自己的 MCP Token 后才能建单',
+      });
+    }
+    const codes = Array.isArray(body.codes) ? body.codes.slice(0, 3).map(String) : [];
+    try {
+      const plan = await prepareOrder(codes);
+      // takeWayCode 必须来自服务端算出来的白名单，不能直接用前端传的字符串
+      const takeWay = order.pickTakeWay(plan.takeWayList, body.takeWayCode);
+      if (!takeWay) throw new Error('计价结果里没有可用的取餐方式，暂时不能下单');
+
+      const created = await session.mcp.callTool('create-order', {
+        storeCode: String(session.storeContext.storeCode),
+        orderType: Number(session.storeContext.orderType) || 1,
+        beType: Number(session.storeContext.beType) || 1,
+        takeWayCode: takeWay.code,
+        needTableware: false,
+        items: plan.orderItems,
+      });
+      if (created && created.success === false) {
+        throw new Error(created.message || `下单失败（${created.code}）`);
+      }
+      const normalized = order.normalizeOrder(created && created.data ? created.data : created);
+      if (!normalized || !normalized.orderId) {
+        throw new Error((created && created.message) || '下单接口没有返回订单号');
+      }
+
+      session.lastOrder = normalized;
+      return sendJson(res, 200, {
+        ok: true,
+        order: normalized,
+        takeWay,
+        allowedTakeWay: plan.takeWayList,
+      });
+    } catch (err) {
+      return sendJson(res, 200, { ok: false, error: err.message });
+    }
+  }
+
+  // 轮询订单状态：MCP 没有支付回调，只能靠前端定时查
+  if (pathname === '/api/order/status' && method === 'GET') {
+    const orderId = url.searchParams.get('orderId');
+    if (!orderId) return sendJson(res, 400, { ok: false, error: '缺少 orderId' });
+    if (session.demo) {
+      return sendJson(res, 403, { ok: false, demo: true, error: '演示模式没有真实订单可查' });
+    }
+    try {
+      const r = await session.mcp.callTool('query-order', { orderId: String(orderId) });
+      if (r && r.success === false) throw new Error(r.message || '查单失败');
+      const normalized = order.normalizeOrder(r && r.data ? r.data : r);
+      if (!normalized || !normalized.orderId) throw new Error('查单接口没有返回订单');
+      session.lastOrder = normalized;
+      return sendJson(res, 200, { ok: true, order: normalized });
+    } catch (err) {
+      return sendJson(res, 200, { ok: false, error: err.message });
+    }
+  }
+
+  // 放弃下单 / 关掉弹窗时兜底取消，别把待支付订单留在账号里
+  if (pathname === '/api/order/cancel' && method === 'POST') {
+    const body = await readBody(req);
+    if (session.demo) {
+      return sendJson(res, 403, { ok: false, demo: true, error: '演示模式没有订单可取消' });
+    }
+    const orderId = body.orderId ? String(body.orderId) : '';
+    if (!orderId) return sendJson(res, 400, { ok: false, error: '缺少 orderId' });
+    try {
+      const r = await session.mcp.callTool('cancel-order', { orderId, cancelReasonCode: '1' });
+      if (r && r.success === false) throw new Error(r.message || '取消失败');
+      const data = r && r.data ? r.data : r;
+      if (!(data && data.cancelResult)) throw new Error('取消失败，请到麦当劳 APP 里手动取消');
+      session.lastOrder = null;
+      return sendJson(res, 200, { ok: true, orderId });
     } catch (err) {
       return sendJson(res, 200, { ok: false, error: err.message });
     }
