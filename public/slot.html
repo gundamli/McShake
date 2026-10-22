@@ -312,6 +312,20 @@
   }
   .reel-strip { will-change: transform; }
 
+  /* 「我要 1+1」锁定分区：第 1 列框蓝、第 2 列框粉，与官方 1+1 两个分区的配色一致。
+     用 box-shadow 往外扩，不改 border-width——否则内容区会被挤掉 1px，
+     格子高度与 strip 的 132px 就对不上了。 */
+  .reel-window.locked-a {
+    border-color: #3d7be8;
+    box-shadow: 0 0 0 3px #3d7be8, 0 0 14px rgba(61, 123, 232, 0.5);
+    z-index: 2;
+  }
+  .reel-window.locked-b {
+    border-color: #e86fa0;
+    box-shadow: 0 0 0 3px #e86fa0, 0 0 14px rgba(232, 111, 160, 0.5);
+    z-index: 2;
+  }
+
   .cell {
     height: 132px;
     display: flex;
@@ -1511,24 +1525,32 @@
 
     var cr = state.comboReels;
     var a = cr.rounds[0], b = cr.rounds[1];
-    hint.classList.remove('hidden');
     if (state.wantCombo) {
+      // 前两列已经用蓝/粉框标出来了，再挂一段长提示是重复信息——收掉。
+      // 细节（缺图几件、剔掉几件）挪到开关的 title 上，鼠标悬停仍看得到。
+      hint.classList.add('hidden');
+      hint.textContent = '';
       var noImg = cr.missingImage
-        ? '（其中 ' + cr.missingImage + ' 件套餐专属餐品没有官方图，显示为文字）'
+        ? '其中 ' + cr.missingImage + ' 件套餐专属餐品没有官方图，显示为文字。'
         : '';
-      // 剔掉的不可售子件要说出来：否则用户会发现列表少了东西，以为是 bug
       var dropped = (cr.dropped && cr.dropped.length)
-        ? '（另有 ' + cr.dropped.length + ' 件当前不可售，已从候选里剔除）'
+        ? '另有 ' + cr.dropped.length + ' 件当前不可售，已从候选里剔除。'
         : '';
-      hint.textContent = '已锁定「' + cr.comboName + '」：第 1 行只在' + a.name + '摇（'
+      toggle.title = '已锁定「' + cr.comboName + '」：第 1 行只在' + a.name + '摇（'
         + a.symbols.length + ' 件），第 2 行只在' + b.name + '摇（' + b.symbols.length
-        + ' 件），所以必定凑得出 ' + cr.pairCount + ' 种组合之一' + noImg + dropped + '；第 3 行不变。';
-      hint.classList.remove('off');
+        + ' 件），共 ' + cr.pairCount + ' 种组合。' + noImg + dropped;
     } else {
+      hint.classList.remove('hidden');
       hint.textContent = '勾上后：第 1 行只在' + a.name + '摇、第 2 行只在' + b.name
         + '摇，这一单必定凑出「' + cr.comboName + '」；第 3 行仍然随便摇。';
       hint.classList.add('off');
+      toggle.title = '';
     }
+
+    // 框与勾选状态同步：取消勾选必须撤干净，不能留着框假装还锁着
+    var wins = document.querySelectorAll('.reel-window');
+    if (wins[0]) wins[0].classList.toggle('locked-a', state.wantCombo);
+    if (wins[1]) wins[1].classList.toggle('locked-b', state.wantCombo);
   }
 
   function bindComboToggle() {
