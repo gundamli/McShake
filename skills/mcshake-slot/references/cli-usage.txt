@@ -1,0 +1,44 @@
+麦摇摇 McShake · 命令行
+
+  node scripts/mcshake.js serve [--demo] [--port 8787] [--restart]
+      启动（或复用）本地服务。没有 MCD_MCP_TOKEN 时自动走演示快照。
+
+  node scripts/mcshake.js status
+      看服务端口、数据源、门店、营业状态、菜单条数。
+
+  node scripts/mcshake.js stop
+      停掉由本技能启动的服务（别人手动开的不动）。
+
+  node scripts/mcshake.js stores [--city 上海] [--keyword 徐家汇] [--json]
+      搜索门店。不填参数时返回账号里的收藏门店。
+
+  node scripts/mcshake.js use <序号|storeCode> [--city ..] [--keyword ..]
+      选中门店（序号对应上一条 stores 的输出）。
+
+  node scripts/mcshake.js symbols [--json]
+      列出滚轮里的符号、单价、稀有/套餐标记。
+
+  node scripts/mcshake.js spin [--seed N] [--city ..] [--keyword ..] [--json]
+      摇一局：三个滚轮停位 + 营养账本 + 真实计价 + 1+1 拼单判断。
+      --seed 只为复现某一局，正常玩不用传。
+
+  node scripts/mcshake.js order preview [--codes a,b,c]
+      只算不建单：金额、明细、能不能拼 1+1、有哪几种取餐方式。
+
+  node scripts/mcshake.js order create [--take-way eat-in|take-in-store] [--codes ..] --yes
+      真建一笔待支付订单，返回 orderId 与付款链接。没有 --yes 不建。
+
+  node scripts/mcshake.js order status <orderId>
+  node scripts/mcshake.js order cancel <orderId>
+      查状态 / 取消订单。
+
+环境变量
+  MCD_MCP_TOKEN     麦当劳 MCP 的 Token。给了就走实时接口，不给走快照。
+  MCSHAKE_HOME      McShake 仓库路径。技能装在离仓库很远的地方时用。
+  MCSHAKE_DEMO      设为 1 强制演示模式（即使有 Token）。
+
+退出码
+  0  正常
+  1  执行失败
+  2  需要更多信息（没选门店 / 没摇过 / 建单缺 --yes）
+  3  找不到项目目录

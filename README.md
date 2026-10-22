@@ -2,7 +2,7 @@
 
 > 2026 麦当劳程序员创意开发大赛参赛作品 · 全程使用 **WorkBuddy** 开发
 >
-> [![Node](https://img.shields.io/badge/Node-22%2B-3c873a)](https://nodejs.org) [![Dependencies](https://img.shields.io/badge/dependencies-0-blue)](#安装方法) [![Tests](https://img.shields.io/badge/tests-182%20passed-success)](test.js) [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+> [![Node](https://img.shields.io/badge/Node-22%2B-3c873a)](https://nodejs.org) [![Dependencies](https://img.shields.io/badge/dependencies-0-blue)](#安装方法) [![Tests](https://img.shields.io/badge/tests-211%20passed-success)](test.js) [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 摇一摇老虎机，摇出你这一餐的营养账本和最省买法。
 
@@ -185,6 +185,21 @@ $ node server.js
 - **1+1 没出现**：随心配按餐段供应。早餐时段菜单里没有它，页面会写「本时段没有供应」；也可能这单的两件不属于同一套餐的不同分区。
 - **营养数据显示「MCP 营养库里没有它」**：那是新品——官方营养表更新比菜单慢。本项目不拿相近单品顶替，宁可留空。
 
+## 命令行与 WorkBuddy 技能
+
+同一套玩法还有一个命令行入口，并打包成了 WorkBuddy 技能 `mcshake-slot`——在 WorkBuddy 里说「摇个麦当劳」「这顿多少卡」就能触发，不用开浏览器：
+
+```bash
+node skills/mcshake-slot/scripts/mcshake.js spin            # 摇一局：停位 + 营养 + 计价 + 1+1
+node skills/mcshake-slot/scripts/mcshake.js order preview   # 只算不建单
+node skills/mcshake-slot/scripts/mcshake.js order create --take-way eat-in --yes
+```
+
+- **一条命令自带一个临时本地服务**（起 → 办事 → 关），不需要先手动 `node server.js`；只有想用浏览器亲自玩才跑 `serve`。这样对话里和网页上走的是同一份计价与拼单逻辑，不会两边口径不一。
+- **没有 Token 自动走演示快照**，所以直接跑就能看到完整结果（会在输出里标明「非实时」）。
+- **`order create` 不带 `--yes` 一律不建单**：建单会在账号里留一笔真实待支付订单，必须先把金额和门店讲清楚再下。
+- 装到 `~/.workbuddy/skills/` 使用时，用环境变量 `MCSHAKE_HOME` 或技能目录下的 `config.json` 指回仓库路径。
+
 ## 工作原理
 
 ### 1. 营养匹配阈值 0.55
@@ -260,7 +275,9 @@ https://m.mcd.cn/mcp/scanToPay?orderId=1030783210000795859126729765
 │   └── demo-snapshot.json   # 线上试玩用的官方数据快照（238 KB，含 286 种组合的真实计价）
 ├── scripts/
 │   └── build-demo-snapshot.js  # 重新抓取快照（约 20 秒）
-├── test.js                  # 核心算法自测（174 项，无需 Token）
+├── skills/
+│   └── mcshake-slot/        # WorkBuddy 技能：在对话框里摇一局、算账、建单
+├── test.js                  # 核心算法自测（184 项，无需 Token）
 ├── test-integration.js      # 协议层集成测试（27 项，内置模拟 MCP 服务）
 ├── docs/
 │   ├── demo-spin.gif        # 操作演示：SPIN → 停位 → 营养与计价 → 命中 1+1
@@ -297,15 +314,15 @@ https://m.mcd.cn/mcp/scanToPay?orderId=1030783210000795859126729765
 ## 测试
 
 ```bash
-node test.js              # 174 项，核心算法（无需 Token、不联网）
+node test.js              # 184 项，核心算法（无需 Token、不联网）
 node test-integration.js  # 27 项，协议层（内置模拟 MCP 服务）
 ```
 
-共 201 项断言，覆盖符号精选、概率支付表、开奖画面一致性（5000 次循环）、营养匹配与 NRV、计价归一化与折扣分摊、1+1 分区索引与拼单匹配、门店参数拆分、SSE/JSON 双格式握手、会话保持、401/429、限流、官方表格格式解析、混合文本 JSON 提取、演示快照的自洽性（三连命中快照原样返回、套餐价 = 基础价 + 差价、未知餐品不给假价格），以及一键下单的参数翻译（取餐方式白名单、套餐 + 剩余单品入参、分/元单位换算、UTC+8 支付截止时间、订单回包收敛）。
+共 211 项断言，覆盖符号精选、概率支付表、开奖画面一致性（5000 次循环）、营养匹配与 NRV、计价归一化与折扣分摊、1+1 分区索引与拼单匹配、门店参数拆分、SSE/JSON 双格式握手、会话保持、401/429、限流、官方表格格式解析、混合文本 JSON 提取、演示快照的自洽性（三连命中快照原样返回、套餐价 = 基础价 + 差价、未知餐品不给假价格）、一键下单的参数翻译（取餐方式白名单、套餐 + 剩余单品入参、分/元单位换算、UTC+8 支付截止时间、订单回包收敛），以及技能自身的可用性（项目定位、开奖判定、建单必须带 `--yes`）。
 
 ## 边界与合规
 
-1. **不替你付钱**。「一键下单」只调 `create-order`，在**你自己**的账号里建一笔待支付订单，然后给你一张 `payH5Url` 的二维码——MCP 没有任何支付工具，付款必须你用手机自己扫。演示模式（无 Token）下按钮固定写「演示模式无法下单」。`mall-create-order`、`party-order-create`（商城与派对订单）不在本项目范围内，一律不调用。另注意账号有**每日下单数上限**，反复试会撞到「今日下单数已经上限」。
+1. **不替你付钱**。「一键下单」只调 `create-order`，在**你自己**的账号里建一笔待支付订单，然后给你一张 `payH5Url` 的二维码——MCP 没有任何支付工具，付款必须你用手机自己扫。扫不了码也不要紧：订单已经在你的账号里，打开麦当劳 APP → 我的订单 → 待支付 能付同一笔（弹窗里也写了这句）。演示模式（无 Token）下按钮固定写「演示模式无法下单」。`mall-create-order`、`party-order-create`（商城与派对订单）不在本项目范围内，一律不调用。另注意账号有**每日下单数上限**，反复试会撞到「今日下单数已经上限」。
 2. **不碰抽奖**。`draw-lottery` 原子扣减积分且不可撤销，本项目只在早期调研时用过只读的 `query-lottery-info`。
 3. **限流**。每个 Token 每分钟 600 次请求，客户端内置令牌桶，超额排队而非直接失败。
 4. **Token 安全**。仅存于服务进程内存，不落盘、不入库；仓库已排除所有可能含凭证的调试产物。

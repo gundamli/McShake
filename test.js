@@ -674,6 +674,49 @@ console.log('\n[10] 一键下单：参数翻译与回包收敛');
   check('支付截止时间带毫秒戳', typeof normalized.expireAt === 'number' && normalized.expireAt > 0);
 }
 
+console.log('\n[11] 技能（skills/mcshake-slot）：能自检、能跑、不乱建单');
+{
+  const fsx = require('fs');
+  const pathx = require('path');
+  const { execFileSync } = require('child_process');
+  const skillDir = pathx.join(__dirname, 'skills', 'mcshake-slot');
+  const entry = pathx.join(skillDir, 'scripts', 'mcshake.js');
+
+  check('技能目录存在', fsx.existsSync(entry));
+  const md = fsx.readFileSync(pathx.join(skillDir, 'SKILL.md'), 'utf8');
+  check('SKILL.md 有 name 与 description', /^name:\s*mcshake-slot$/m.test(md) && /^description:\s*"/m.test(md));
+  check('SKILL.md 写明「没有支付工具」这条边界', md.includes('没有支付能力') || md.includes('没有支付工具'));
+
+  // 项目定位：装在仓库里时必须能自己找到仓库根
+  const { resolveProjectRoot, looksLikeProject } = require('./skills/mcshake-slot/scripts/lib/root');
+  check('looksLikeProject 认得本仓库', looksLikeProject(__dirname) === true);
+  check('resolveProjectRoot 能定位到仓库根', resolveProjectRoot() === __dirname, resolveProjectRoot());
+
+  // 排版：三连/两连/全不同的判定必须一致
+  const render = require('./skills/mcshake-slot/scripts/lib/render');
+  check('三连识别为头奖', render.judge(['1401', '1401', '1401']).kind === 'jackpot');
+  check('两连识别为小奖', render.judge(['1401', '1401', '4437']).kind === 'pair');
+  check('全不同识别为未中奖', render.judge(['1401', '4437', '4810']).kind === 'none');
+
+  // 不带参数必须打印用法、退出码 0，而不是抛栈
+  let help = '';
+  try {
+    help = execFileSync(process.execPath, [entry, 'help'], { encoding: 'utf8', timeout: 20000 });
+  } catch (err) {
+    help = '';
+  }
+  check('无参数运行打印用法并正常退出', help.includes('spin') && help.includes('order preview'), help.slice(0, 80));
+
+  // 建单保护：没有 --yes 不能真下单（这条只验证退出码，不触网）
+  let code = 0;
+  try {
+    execFileSync(process.execPath, [entry, 'order', 'create'], { encoding: 'utf8', timeout: 20000, stdio: 'pipe' });
+  } catch (err) {
+    code = err.status;
+  }
+  check('order create 缺 --yes 时拒绝执行（退出码 2）', code === 2 || code === 3, `exit=${code}`);
+}
+
 console.log(`\n结果：${pass} 通过，${fail} 失败\n`);
 process.exit(fail === 0 ? 0 : 1);
 })();

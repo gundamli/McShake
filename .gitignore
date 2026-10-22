@@ -18,6 +18,9 @@ codes.json
 # 本地试运行的截图与临时请求快照
 .capture/
 
+# 技能安装到用户目录时，用它指回仓库路径——每人机器不同，不入库
+skills/mcshake-slot/config.json
+
 # 环境变量与密钥
 .env
 .env.local
